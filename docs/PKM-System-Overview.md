@@ -1,4 +1,4 @@
-**Personal Knowledge Management (PKM) System — Revised Overview (as of May 18, 2025)**
+**Personal Knowledge Management (PKM) System — Overview (last updated: 2024-05-18 20:25 CET)**
 
 ---
 
@@ -12,7 +12,7 @@ The long-term vision includes automatic ingestion from `~/OneDrive/PKM/Inbox`, p
 * Manual file uploads
 * Email Shortcuts (Phase 2)
 
-All data will be transformed into markdown with YAML frontmatter and stored alongside original files. The system will be simple, extensible, and voice-enabled (in Phase 2).
+All data will be transformed into structured markdown metadata records containing AI-enriched summaries, tags, and references to the original source files. Text content is included only when appropriate. The system will be simple, extensible, and voice-enabled (in Phase 2).
 
 ---
 
@@ -27,31 +27,30 @@ All data will be transformed into markdown with YAML frontmatter and stored alon
 * **Core Responsibilities**:
 
   * Monitor/sync files from Inbox
-  * Generate metadata using OpenAI (sync client fallback used for now)
-  * Convert content to markdown + YAML frontmatter
-  * Organize into Staging or Areas directories
-  * Index and serve search endpoints
-  * Expose file browsing and raw content endpoints for staging/log review
+  * Generate rich metadata summaries using OpenAI
+  * Extract and summarize content from PDFs, audio, URLs, and markdown
+  * Store structured `.md` metadata files with frontmatter and optional content
+  * Serve metadata summaries via API and enable approval/review
+  * Index summaries and metadata fields into FAISS for retrieval
 
 * **Key Modules**:
 
   * `main.py`: API endpoints `/staging`, `/approve`, `/trigger-organize`, `/files/{folder}`, `/file-content/{folder}/{filename}`, `/upload/{folder}`
-  * `organize.py`: Organizes and enriches files with metadata (uses legacy OpenAI API for stability)
-  * `index.py`: Indexes markdown via FAISS; currently uses an `async def indexKB()` function
+  * `organize.py`: Processes files, generates AI summaries, injects metadata
+  * `index.py`: Indexes summaries and metadata (not full file bodies)
 
-* **Key Note**: Although `indexKB()` is asynchronous, it is currently called from `@app.on_event("startup")` using `await`, which works in the current MVP due to FastAPI's async support in startup events. This design is **acceptable for MVP and testing**, but should be reviewed in the future for long-term reliability, especially if we introduce background workers or refactor indexing to a scheduled or queued task.
+* **File Structure for OneDrive Compatibility**:
 
-* **Key Directories**:
+  * `Inbox/` — where unprocessed uploads arrive
+  * `Processed/`
 
-  * `pkm/Inbox` — temporary holding area
-  * `pkm/Staging` — review queue
-  * `pkm/Areas/<category>` — finalized, structured storage
-  * `pkm/Logs/` — error tracking
+    * `Metadata/` — YAML frontmatter `.md` records (summaries, tags, source refs)
+    * `Sources/` — original files, organized by type (PDFs, images, audio, etc.)
+  * `Archive/` — optional long-term storage for previously handled files
 
-* **Key Endpoints**:
+  This layout replaces the older `Areas/` model, which conflated category and storage. Categories are now handled via metadata tags and can be visualized dynamically rather than being embedded in the directory structure.
 
-  * `/files/{folder}` — list files in Inbox, Staging, Areas, or Logs
-  * `/file-content/{folder}/{filename}` — returns raw file content (e.g., for log review)
+* **Scalability Note**: In Phase 2, content chunking and document splitting will support indexing long PDFs or audio transcripts across multiple `.md` metadata records.
 
 #### **Frontend (pkm-app)**
 
@@ -61,39 +60,48 @@ All data will be transformed into markdown with YAML frontmatter and stored alon
 
 * **Core Responsibilities**:
 
-  * Review and approve staged files
-  * Search indexed KB
-  * Upload markdown files (temporary MVP workflow)
+  * Review metadata summaries in staging
+  * Edit and approve titles, tags, categories, summaries
+  * Provide access to the original file when applicable
+  * Search indexed summaries via semantic search
 
 * **Key Components**:
 
-  * `index.js`: Search bar + file upload
-  * `staging.js`: Review interface for files with error-guarded metadata rendering
-  * `StagingForm.js`: Approve or edit metadata
+  * `index.js`: Query/search interface
+  * `staging.js`: File review queue
+  * `StagingForm.js`: Metadata and summary editor
+
+* **Tag Management & Extension** (planned):
+
+  * A registry of unique tags will be generated based on all `.md` metadata
+  * Admins can browse, rename, merge, or delete tags
+  * Optional **custom actions** can be configured for specific tags (e.g. if tag is `life wisdom`, auto-append content to `wisdom.md`)
+  * A dashboard endpoint (e.g. `/tags`) or a static tag index file (e.g. `tags.json`) can be regenerated after each indexing pass
 
 ---
 
-### **Use of LangChain (Planned for Phase 2)**
+### **LangChain & Retrieval Pipeline (Planned for Phase 2)**
 
-LangChain will modularize prompt workflows and search pipelines:
+LangChain will modularize prompt workflows, document parsing, and multi-turn query routing:
 
 * **Metadata Generation**:
 
   * Replace `get_metadata()` with LangChain chains
-  * Use `PromptTemplate` + `RunnableSequence`
-  * Chain: `summarize -> tag -> categorize`
-* **Multi-Modal Content Handling**:
+  * Use structured prompt templates and output parsers
+  * Chain steps: summarize → extract tags → infer category → inject metadata
 
-  * PDFs → text → summarize/tag
-  * URLs → scrape → summarize/tag
-  * Audio/video → Whisper → summarize/tag
-* **Semantic Search Enhancements**:
+* **Semantic Search / RAG Setup**:
 
-  * Rewrite/expand queries
-  * Maintain conversational context
-  * Combine vector search with reasoning
+  * Index only the AI-generated summaries and key metadata (not raw file content)
+  * Use FAISS + LangChain Retriever to find top-matching `.md` summaries
+  * Return metadata + `source:` link so the user can download the original
+  * Future: use conversational memory or query rewriting for refinement
 
-LangChain is appropriate given your need for chaining, modularity, and multi-step AI workflows.
+* **Multi-File Summarization**:
+
+  * Long files split into meaningful semantic chunks (LangChain splitter)
+  * Each chunk gets its own metadata `.md` entry (linked via file + page ID)
+  * Enables reasoning across large documents or sessions
 
 ---
 
@@ -101,14 +109,17 @@ LangChain is appropriate given your need for chaining, modularity, and multi-ste
 
 ```yaml
 ---
-title: AI Drones Report
+title: AI Strategy Brief
 date: 2025-05-18
-tags: [AI, drones, military]
-category: Technology
-source: military-ai-report.pdf
-source_url: https://...
+file_type: pdf
+source: ai-strategy-brief.pdf
+source_url: null
+tags: [AI, logistics, autonomous systems]
 author: Unknown
-summary: A report on AI drones in military operations.
+summary: |
+  This 8-page brief outlines how autonomous agents will disrupt logistics and procurement.
+  It highlights real-world deployments by Maersk and Amazon. Core themes include decision latency,
+  autonomous workflows, and multi-agent systems.
 reviewed: false
 ---
 ```
@@ -117,72 +128,42 @@ reviewed: false
 
 ### **Workflow**
 
-#### **Capture (Current: Temporary Upload | Future: OneDrive Sync)**
+#### **Capture**
 
-* Markdown files uploaded via `/upload/{folder}`
-* In Phase 2: OneDrive folder watcher → `pkm/Inbox`
+* Files uploaded via `/upload/{folder}`
+* In Phase 2: Sync from OneDrive or webhook integrations
 
 #### **Organize**
 
-* `organize.py` parses markdown and enriches metadata
-* Moves file to `pkm/Staging`
-* Logs metadata extraction and issues
-* Future: handle PDFs, audio, video, URLs
+* `organize.py` uses OpenAI to summarize and tag the content
+* If the file is short and plain-text, content is included below the frontmatter
+* If long or non-text (PDF, image), summary + metadata only — source is referenced
+* All outputs stored in `Processed/Metadata/`, while original files are moved to `Processed/Sources/`
 
 #### **Review**
 
-* PWA shows staged files for approval
-* User edits YAML frontmatter
-* On approval, file moves to `pkm/Areas/<category>`
+* UI shows:
+
+  * Title, summary, tags, category
+  * Link to download original source file
+  * Optional full content (if included)
+* Users edit metadata and approve
 
 #### **Query**
 
-* PWA sends query to `/search` (FAISS now)
-* Phase 2: LangChain-enhanced retriever with semantic rephrasing
+* `/search` endpoint uses FAISS to retrieve top-k summaries
+* Future: LangChain-enhanced retriever handles query expansion + citations
+* Retrieved results are rendered with summary + source reference
 
 ---
 
-### **Current Status (MVP)**
+### **MVP Status & Outlook**
 
-* **Backend**: Deployed; API endpoints live
-* **Frontend**: Deployed; staging UI fixed for null-safe rendering
-* **Successes**:
-
-  * `/trigger-organize` functional with sync OpenAI API
-  * File detected and moved to staging
-  * Metadata (when available) injected
-* **Remaining Gaps**:
-
-  * Metadata may still be empty for new test files
-  * Frontend must safely render missing metadata (e.g. title fallback)
-  * Missing file-content endpoint added for log inspection and staging review
-
----
-
-### **Next Steps (Stable MVP to LangChain Upgrade)**
-
-1. **Patch Frontend (Done)**
-
-   * Add optional chaining to avoid crashes from missing metadata
-
-2. **Improve Metadata Defaults in Backend**
-
-   * Inject fallback values if summary/tags are missing
-
-3. **LangChain Integration** (Phase 2)
-
-   * Introduce `RunnableSequence`-based prompt chains
-   * Modularize multi-step workflows for PDFs, URLs, and transcripts
-
-4. **Enable Rich File Support**
-
-   * Add PDF parsing (via `pdfplumber`)
-   * Add URL scraping (via `requests` + `bs4`)
-   * Add Whisper-based audio transcription
-
-5. **Switch to Persistent File Store (Optional)**
-
-   * Use Supabase Storage or S3 to persist files across deploys
-   * Rewrite file handlers to support signed URLs or API-based storage access
+* ✅ Upload → summarize → approve loop functional
+* ✅ Structured metadata + file tracking in place
+* ✅ Staging UI renders metadata with fallbacks
+* ✅ OpenAI now returns JSON metadata reliably
+* 🟡 Tag governance + custom tag triggers planned
+* 🚧 Phase 2: LangChain + PDF + URL support + voice transcripts
 
 ---
