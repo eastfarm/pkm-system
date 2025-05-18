@@ -1,0 +1,38 @@
+# Global
+.DS_Store
+Thumbs.db
+*.log
+
+# Node / Frontend
+node_modules/
+.next/
+out/
+npm-debug.log
+yarn-error.log
+
+# Python / Backend
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+.env.*
+*.env
+
+# App-specific artifacts
+apps/pkm-indexer/pkm/
+apps/pkm-indexer/pkm_index/
+
+# FAISS index cache
+*.faiss
+
+# Misc
+*.cache
+coverage/
