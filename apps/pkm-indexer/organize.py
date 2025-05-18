@@ -5,6 +5,7 @@ import frontmatter
 import openai
 import re
 import json
+from pathlib import Path
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -24,83 +25,96 @@ def get_metadata(content):
             ],
             max_tokens=200
         )
-
         raw = response["choices"][0]["message"]["content"]
         parsed = json.loads(raw)
         summary = parsed.get("summary", "Summary not available")
         tags = parsed.get("tags", ["uncategorized"])
         return summary, tags
     except Exception as e:
-        logs = "pkm/Logs"
-        os.makedirs(logs, exist_ok=True)
-        log_file = os.path.join(logs, f"log_organize_{int(time.time())}.md")
-        with open(log_file, "a", encoding="utf-8") as log_f:
-            log_f.write(f"# Error in get_metadata at {time.time()}\n")
-            log_f.write(f"Message: {str(e)}\n")
-            log_f.write(f"Raw response: {locals().get('raw', '')}\n\n")
         return "Summary not available", ["uncategorized"]
+
+def infer_file_type(filename):
+    ext = Path(filename).suffix.lower()
+    if ext in [".md", ".txt"]: return "text"
+    if ext in [".pdf"]: return "pdf"
+    if ext in [".png", ".jpg", ".jpeg", ".gif", ".bmp"]: return "image"
+    if ext in [".mp3", ".wav", ".m4a"]: return "audio"
+    if ext in [".doc", ".docx"]: return "document"
+    return "other"
 
 def organize_files():
     inbox = "pkm/Inbox"
-    staging = "pkm/Staging"
+    meta_out = "pkm/Processed/Metadata"
+    source_out = "pkm/Processed/Sources"
     logs = "pkm/Logs"
+
     os.makedirs(inbox, exist_ok=True)
-    os.makedirs(staging, exist_ok=True)
+    os.makedirs(meta_out, exist_ok=True)
+    os.makedirs(source_out, exist_ok=True)
     os.makedirs(logs, exist_ok=True)
 
     log_file = os.path.join(logs, f"log_organize_{int(time.time())}.md")
     with open(log_file, "a", encoding="utf-8") as log_f:
         log_f.write(f"# Organize run at {time.time()}\n\n")
 
-    files = [f for f in os.listdir(inbox) if f.endswith(".md")]
+    files = [f for f in os.listdir(inbox) if os.path.isfile(os.path.join(inbox, f))]
     with open(log_file, "a", encoding="utf-8") as log_f:
         log_f.write(f"Found files in Inbox: {files}\n")
 
-    for md_file in files:
+    for filename in files:
         try:
             with open(log_file, "a", encoding="utf-8") as log_f:
-                log_f.write(f"Processing {md_file}\n")
+                log_f.write(f"Processing {filename}\n")
 
-            with open(os.path.join(inbox, md_file), "rb") as f:
+            input_path = os.path.join(inbox, filename)
+            with open(input_path, "rb") as f:
                 raw_bytes = f.read()
 
             try:
-                content = raw_bytes.decode("utf-8")
+                text_content = raw_bytes.decode("utf-8")
             except UnicodeDecodeError:
-                content = raw_bytes.decode("latin-1")
+                text_content = raw_bytes.decode("latin-1")
 
-            post = frontmatter.loads(content)
-            post.content = str(post.content)
+            file_type = infer_file_type(filename)
+            base_name = Path(filename).stem
+            today = time.strftime("%Y-%m-%d")
+            md_filename = f"{today}_{base_name}.md"
+            summary, tags = get_metadata(text_content)
 
-            if not post.metadata:
-                post.metadata = {}
+            metadata = {
+                "title": base_name,
+                "date": today,
+                "file_type": file_type,
+                "source": filename,
+                "source_url": None,
+                "tags": tags,
+                "author": "Unknown",
+                "summary": summary,
+                "reviewed": False
+            }
 
-            post.metadata.setdefault("title", md_file.replace(".md", ""))
-            post.metadata.setdefault("date", time.strftime("%Y-%m-%d"))
-            post.metadata.setdefault("category", "General")
-            post.metadata.setdefault("pdf", "")
+            post = frontmatter.Post(
+                content=text_content if file_type == "text" and len(text_content) < 3000 else "[Content omitted]",
+                **metadata
+            )
 
-            summary, tags = get_metadata(post.content)
-            post.metadata["summary"] = summary
-            post.metadata["tags"] = tags
+            # Write metadata file
+            meta_path = os.path.join(meta_out, md_filename)
+            with open(meta_path, "w", encoding="utf-8") as f:
+                f.write(frontmatter.dumps(post))
 
-            if not re.search(r"# Reviewed: (true|false)", post.content, re.IGNORECASE):
-                post.content += "\n\n# Reviewed: false"
-
-            rendered = frontmatter.dumps(post)
-            with open(os.path.join(staging, md_file), "w", encoding="utf-8") as f:
-                f.write(rendered)
+            # Move original file to sources folder
+            dest_dir = os.path.join(source_out, file_type)
+            os.makedirs(dest_dir, exist_ok=True)
+            shutil.move(input_path, os.path.join(dest_dir, filename))
 
             with open(log_file, "a", encoding="utf-8") as log_f:
-                log_f.write(f"Wrote {md_file} to Staging\n")
-
-            os.remove(os.path.join(inbox, md_file))
-            with open(log_file, "a", encoding="utf-8") as log_f:
-                log_f.write(f"Removed {md_file} from Inbox\n")
+                log_f.write(f"Metadata saved: {md_filename}\n")
+                log_f.write(f"Source moved to: {file_type}/{filename}\n")
 
         except Exception as e:
             with open(log_file, "a", encoding="utf-8") as log_f:
-                log_f.write(f"# Error processing {md_file} at {time.time()}\n")
+                log_f.write(f"# Error processing {filename} at {time.time()}\n")
                 log_f.write(f"Message: {str(e)}\n\n")
             continue
 
