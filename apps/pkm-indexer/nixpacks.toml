@@ -1,0 +1,12 @@
+[phases.setup]
+nixPkgs = ["python310", "gcc"]
+aptPkgs = ["build-essential", "libgomp1", "cmake", "swig", "libatlas-base-dev", "gfortran", "libblas-dev", "libeigen3-dev"]
+
+[phases.build]
+cmds = [
+  "pip install --upgrade pip setuptools wheel",
+  "pip install -r requirements.txt"
+]
+
+[start]
+cmd = "uvicorn main:app --host 0.0.0.0 --port $PORT"
