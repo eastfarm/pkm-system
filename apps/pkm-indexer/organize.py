@@ -53,16 +53,22 @@ def organize_files():
             with open(log_file, "a", encoding="utf-8") as log_f:
                 log_f.write(f"Processing {md_file}\n")
 
-            # Read raw bytes and decode
             with open(os.path.join(inbox, md_file), "rb") as f:
                 raw_bytes = f.read()
+
             try:
                 content = raw_bytes.decode("utf-8")
             except UnicodeDecodeError:
                 content = raw_bytes.decode("latin-1")
 
-            # Load post and ensure text mode write
+            if not isinstance(content, str):
+                content = str(content)
+
             post = frontmatter.loads(content)
+
+            # Just in case something inside was not a string
+            if not isinstance(post.content, str):
+                post.content = str(post.content)
 
             if not post.metadata:
                 post.metadata = {}
@@ -79,8 +85,12 @@ def organize_files():
             if not re.search(r"# Reviewed: (true|false)", post.content, re.IGNORECASE):
                 post.content += "\n\n# Reviewed: false"
 
+            # 🔒 Force dump-safe version of post
+            if not isinstance(post.content, str):
+                post.content = str(post.content)
+
             with open(os.path.join(staging, md_file), "w", encoding="utf-8") as f:
-                frontmatter.dump(post, f)  # ✅ now guaranteed to be string-safe
+                frontmatter.dump(post, f)
 
             with open(log_file, "a", encoding="utf-8") as log_f:
                 log_f.write(f"Wrote {md_file} to Staging\n")
