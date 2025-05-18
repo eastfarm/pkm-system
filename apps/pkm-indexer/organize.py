@@ -54,13 +54,9 @@ def organize_files():
             except UnicodeDecodeError:
                 content = raw_bytes.decode("latin-1")
 
-            if not isinstance(content, str):
-                content = str(content)
-
             post = frontmatter.loads(content)
 
-            # Enforce content as string
-            post.content = str(post.content)
+            post.content = str(post.content)  # Just to be safe
 
             if not post.metadata:
                 post.metadata = {}
@@ -77,14 +73,10 @@ def organize_files():
             if not re.search(r"# Reviewed: (true|false)", post.content, re.IGNORECASE):
                 post.content += "\n\n# Reviewed: false"
 
-            # Debug types before dump
-            with open(log_file, "a", encoding="utf-8") as log_f:
-                log_f.write(f"Metadata type: {type(post.metadata)}\n")
-                log_f.write(f"Content type: {type(post.content)}\n")
-                log_f.write(f"Metadata keys: {list(post.metadata.keys())}\n")
-
+            # ✅ Serialize manually and write as string
+            rendered = frontmatter.dumps(post)
             with open(os.path.join(staging, md_file), "w", encoding="utf-8") as f:
-                frontmatter.dump(post, f)
+                f.write(rendered)
 
             with open(log_file, "a", encoding="utf-8") as log_f:
                 log_f.write(f"Wrote {md_file} to Staging\n")
@@ -96,7 +88,7 @@ def organize_files():
         except Exception as e:
             with open(log_file, "a", encoding="utf-8") as log_f:
                 log_f.write(f"# Error processing {md_file} at {time.time()}\n")
-                log_f.write(f"Message: {str(e)}\n")
+                log_f.write(f"Message: {str(e)}\n\n")
             continue
 
 if __name__ == "__main__":
