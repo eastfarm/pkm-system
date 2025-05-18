@@ -36,11 +36,11 @@ async def search(query: Query):
 
 @app.get("/staging")
 async def get_staging():
-    staging = "pkm/Staging"
-    os.makedirs(staging, exist_ok=True)
+    metadata_path = "pkm/Processed/Metadata"
+    os.makedirs(metadata_path, exist_ok=True)
     files = []
-    for md_file in [f for f in os.listdir(staging) if f.endswith(".md")]:
-        with open(os.path.join(staging, md_file), "r", encoding="utf-8") as f:
+    for md_file in [f for f in os.listdir(metadata_path) if f.endswith(".md")]:
+        with open(os.path.join(metadata_path, md_file), "r", encoding="utf-8") as f:
             post = frontmatter.load(f)
             files.append({
                 "name": md_file,
@@ -51,38 +51,19 @@ async def get_staging():
 
 @app.post("/approve")
 async def approve(file: File):
-    staging = "pkm/Staging"
-    areas = "pkm/Areas"
-    inbox = "pkm/Inbox"
+    approved_dir = "pkm/Approved"
+    os.makedirs(approved_dir, exist_ok=True)
+
     file_data = file.file
     md_file = file_data["name"]
     content = file_data["content"]
     metadata = file_data["metadata"]
-    category = metadata.get("category", "General")
-    pdf_name = metadata.get("pdf", "")
-    pdf_path = os.path.join(staging, pdf_name) if pdf_name else ""
 
-    if re.search(r"# Reviewed: true", content, re.IGNORECASE):
-        dest_dir = os.path.join(areas, category)
-        os.makedirs(dest_dir, exist_ok=True)
-        dest_md_file = os.path.join(dest_dir, md_file)
-        post = frontmatter.Post(content=content, **metadata)
+    post = frontmatter.Post(content=content, **metadata)
+    with open(os.path.join(approved_dir, md_file), "w", encoding="utf-8") as f:
+        frontmatter.dump(post, f)
 
-        with open(os.path.join(staging, md_file), "w", encoding="utf-8") as f:
-            frontmatter.dump(post, f)
-
-        shutil.move(os.path.join(staging, md_file), dest_md_file)
-
-        if pdf_name and os.path.exists(pdf_path):
-            shutil.move(pdf_path, os.path.join(dest_dir, pdf_name))
-
-        inbox_pdf = os.path.join(inbox, pdf_name)
-        if pdf_name and os.path.exists(inbox_pdf):
-            os.remove(inbox_pdf)
-
-        return {"status": f"Approved {md_file}"}
-
-    return {"status": "Not approved: # Reviewed: false"}
+    return {"status": f"Approved {md_file}"}
 
 @app.post("/organize")
 async def manual_organize():
@@ -96,7 +77,7 @@ async def trigger_organize():
 
 @app.post("/upload/{folder}")
 async def upload_file(folder: str, file_data: dict):
-    allowed_folders = ["Inbox", "Staging", "Areas"]
+    allowed_folders = ["Inbox"]
     if folder not in allowed_folders:
         raise HTTPException(status_code=400, detail="Invalid folder")
 
@@ -110,36 +91,30 @@ async def upload_file(folder: str, file_data: dict):
         raise HTTPException(status_code=400, detail="Filename and content are required")
 
     try:
-        # Decode base64 content
         decoded = base64.b64decode(content.encode())
-
         with open(os.path.join(path, filename), "wb") as f:
             f.write(decoded)
-
         return {"status": f"File uploaded to {folder}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
 
 @app.get("/files/{folder}")
 async def list_files(folder: str):
-    allowed_folders = ["Inbox", "Staging", "Areas", "Logs"]
-    if folder not in allowed_folders:
-        raise HTTPException(status_code=400, detail="Invalid folder")
-    path = f"pkm/{folder}"
-    if not os.path.exists(path):
+    allowed_folders = ["Inbox", "Processed", "Logs"]
+    base_path = f"pkm/{folder}"
+    if not os.path.exists(base_path):
         return {"files": []}
-    files = os.listdir(path)
+    files = []
+    for root, _, filenames in os.walk(base_path):
+        for filename in filenames:
+            files.append(os.path.relpath(os.path.join(root, filename), base_path))
     return {"files": files}
 
 @app.get("/file-content/{folder}/{filename}")
 async def get_file_content(folder: str, filename: str):
-    allowed_folders = ["Inbox", "Staging", "Areas", "Logs"]
-    if folder not in allowed_folders:
-        raise HTTPException(status_code=400, detail="Invalid folder")
     file_path = os.path.join("pkm", folder, filename)
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="Not Found")
-
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             return f.read()
@@ -148,14 +123,15 @@ async def get_file_content(folder: str, filename: str):
 
 @app.get("/")
 async def root():
-    return {"message": "PKM Indexer API is running. Use /search, /staging, /approve, or /organize endpoints."}
+    return {"message": "PKM Indexer API is running."}
 
 @app.on_event("startup")
 async def startup_event():
     os.makedirs("pkm/Inbox", exist_ok=True)
-    os.makedirs("pkm/Staging", exist_ok=True)
-    os.makedirs("pkm/Areas", exist_ok=True)
+    os.makedirs("pkm/Processed/Metadata", exist_ok=True)
+    os.makedirs("pkm/Processed/Sources", exist_ok=True)
     os.makedirs("pkm/Logs", exist_ok=True)
+    os.makedirs("pkm/Approved", exist_ok=True)
 
     try:
         await indexKB()
