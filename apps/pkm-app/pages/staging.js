@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
-import StagingForm from '../components/StagingForm';
+import StagingTable from '../components/StagingTable';
 
 export default function Staging() {
   const [files, setFiles] = useState([]);
@@ -13,7 +13,7 @@ export default function Staging() {
   const fetchFiles = async () => {
     try {
       const response = await axios.get('https://pkm-indexer-production.up.railway.app/staging');
-      setFiles(response.data.files);
+      setFiles(response.data.files || []);
     } catch (err) {
       setError('Failed to load staging files');
     }
@@ -29,12 +29,10 @@ export default function Staging() {
   };
 
   return (
-    <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto' }}>
+    <div style={{ padding: '20px', maxWidth: '1000px', margin: '0 auto' }}>
       <h1>Review Staging Files</h1>
       {error && <p style={{ color: 'red' }}>{error}</p>}
-      {files.map((file, index) => (
-        <StagingForm key={index} file={file} onApprove={handleApprove} />
-      ))}
+      <StagingTable files={files} onApprove={handleApprove} />
     </div>
   );
 }
