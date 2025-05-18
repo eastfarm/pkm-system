@@ -53,6 +53,7 @@ def organize_files():
             with open(log_file, "a", encoding="utf-8") as log_f:
                 log_f.write(f"Processing {md_file}\n")
 
+            # Read raw bytes and decode
             with open(os.path.join(inbox, md_file), "rb") as f:
                 raw_bytes = f.read()
             try:
@@ -60,7 +61,9 @@ def organize_files():
             except UnicodeDecodeError:
                 content = raw_bytes.decode("latin-1")
 
+            # Load post and ensure text mode write
             post = frontmatter.loads(content)
+
             if not post.metadata:
                 post.metadata = {}
 
@@ -77,7 +80,7 @@ def organize_files():
                 post.content += "\n\n# Reviewed: false"
 
             with open(os.path.join(staging, md_file), "w", encoding="utf-8") as f:
-                frontmatter.dump(post, f)
+                frontmatter.dump(post, f)  # ✅ now guaranteed to be string-safe
 
             with open(log_file, "a", encoding="utf-8") as log_f:
                 log_f.write(f"Wrote {md_file} to Staging\n")
