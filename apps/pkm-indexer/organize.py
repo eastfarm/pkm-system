@@ -23,13 +23,6 @@ def get_metadata(content):
         tags = [tag.strip() for tag in result.split("\n")[1].split(",") if tag.strip()]
         return summary or "No summary available", tags or ["uncategorized"]
     except Exception as e:
-        logs = "pkm/Logs"
-        os.makedirs(logs, exist_ok=True)
-        log_file = os.path.join(logs, f"log_organize_{int(time.time())}.md")
-        with open(log_file, "a", encoding="utf-8") as log_f:
-            log_f.write(f"# Error in get_metadata at {time.time()}\n")
-            log_f.write(f"Message: {str(e)}\n")
-            log_f.write(f"Content: {content[:100]}...\n\n")
         return "Summary not available", ["uncategorized"]
 
 def organize_files():
@@ -66,9 +59,8 @@ def organize_files():
 
             post = frontmatter.loads(content)
 
-            # Just in case something inside was not a string
-            if not isinstance(post.content, str):
-                post.content = str(post.content)
+            # Enforce content as string
+            post.content = str(post.content)
 
             if not post.metadata:
                 post.metadata = {}
@@ -85,9 +77,11 @@ def organize_files():
             if not re.search(r"# Reviewed: (true|false)", post.content, re.IGNORECASE):
                 post.content += "\n\n# Reviewed: false"
 
-            # 🔒 Force dump-safe version of post
-            if not isinstance(post.content, str):
-                post.content = str(post.content)
+            # Debug types before dump
+            with open(log_file, "a", encoding="utf-8") as log_f:
+                log_f.write(f"Metadata type: {type(post.metadata)}\n")
+                log_f.write(f"Content type: {type(post.content)}\n")
+                log_f.write(f"Metadata keys: {list(post.metadata.keys())}\n")
 
             with open(os.path.join(staging, md_file), "w", encoding="utf-8") as f:
                 frontmatter.dump(post, f)
@@ -102,7 +96,7 @@ def organize_files():
         except Exception as e:
             with open(log_file, "a", encoding="utf-8") as log_f:
                 log_f.write(f"# Error processing {md_file} at {time.time()}\n")
-                log_f.write(f"Message: {str(e)}\n\n")
+                log_f.write(f"Message: {str(e)}\n")
             continue
 
 if __name__ == "__main__":
