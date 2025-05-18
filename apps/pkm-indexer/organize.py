@@ -4,25 +4,40 @@ import time
 import frontmatter
 import openai
 import re
+import json
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 def get_metadata(content):
     try:
-        prompt = f"Summarize this content in 1 sentence:\n{content}\n\nProvide 2-5 tags for this content."
+        prompt = (
+            f"Please return a short metadata object in JSON format.\n"
+            f"Input:\n{content}\n\n"
+            f"Return format:\n"
+            f'{{"summary": "...", "tags": ["tag1", "tag2", "tag3"]}}'
+        )
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that summarizes content and generates metadata."},
+                {"role": "system", "content": "You are a helpful assistant that summarizes content and generates structured metadata."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=100
+            max_tokens=200
         )
-        result = response["choices"][0]["message"]["content"]
-        summary = result.split("\n")[0]
-        tags = [tag.strip() for tag in result.split("\n")[1].split(",") if tag.strip()]
-        return summary or "No summary available", tags or ["uncategorized"]
+
+        raw = response["choices"][0]["message"]["content"]
+        parsed = json.loads(raw)
+        summary = parsed.get("summary", "Summary not available")
+        tags = parsed.get("tags", ["uncategorized"])
+        return summary, tags
     except Exception as e:
+        logs = "pkm/Logs"
+        os.makedirs(logs, exist_ok=True)
+        log_file = os.path.join(logs, f"log_organize_{int(time.time())}.md")
+        with open(log_file, "a", encoding="utf-8") as log_f:
+            log_f.write(f"# Error in get_metadata at {time.time()}\n")
+            log_f.write(f"Message: {str(e)}\n")
+            log_f.write(f"Raw response: {locals().get('raw', '')}\n\n")
         return "Summary not available", ["uncategorized"]
 
 def organize_files():
@@ -55,8 +70,7 @@ def organize_files():
                 content = raw_bytes.decode("latin-1")
 
             post = frontmatter.loads(content)
-
-            post.content = str(post.content)  # Just to be safe
+            post.content = str(post.content)
 
             if not post.metadata:
                 post.metadata = {}
@@ -73,7 +87,6 @@ def organize_files():
             if not re.search(r"# Reviewed: (true|false)", post.content, re.IGNORECASE):
                 post.content += "\n\n# Reviewed: false"
 
-            # ✅ Serialize manually and write as string
             rendered = frontmatter.dumps(post)
             with open(os.path.join(staging, md_file), "w", encoding="utf-8") as f:
                 f.write(rendered)
