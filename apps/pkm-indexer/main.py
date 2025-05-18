@@ -12,7 +12,6 @@ import base64
 
 app = FastAPI()
 
-# Enable CORS for testing/development
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -98,23 +97,24 @@ async def upload_file(folder: str, file_data: dict):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
 
-@app.get("/files/{folder}")
+@app.get("/files/{folder:path}")
 async def list_files(folder: str):
-    allowed_folders = ["Inbox", "Processed", "Logs"]
-    base_path = f"pkm/{folder}"
+    base_path = os.path.join("pkm", *folder.split("/"))
     if not os.path.exists(base_path):
-        return {"files": []}
+        raise HTTPException(status_code=404, detail="Folder not found")
     files = []
     for root, _, filenames in os.walk(base_path):
         for filename in filenames:
-            files.append(os.path.relpath(os.path.join(root, filename), base_path))
+            rel_path = os.path.relpath(os.path.join(root, filename), base_path)
+            files.append(rel_path)
     return {"files": files}
 
-@app.get("/file-content/{folder}/{filename}")
-async def get_file_content(folder: str, filename: str):
-    file_path = os.path.join("pkm", folder, filename)
+@app.get("/file-content/{folder:path}")
+async def get_file_content(folder: str):
+    file_path = os.path.join("pkm", *folder.split("/"))
     if not os.path.isfile(file_path):
-        raise HTTPException(status_code=404, detail="Not Found")
+        raise HTTPException(status_code=404, detail="File not found")
+
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             return f.read()
