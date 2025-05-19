@@ -72,16 +72,22 @@ def organize_files():
     os.makedirs(source_out, exist_ok=True)
     os.makedirs(logs, exist_ok=True)
 
+    print(f"🔍 Starting organize_files()\n📥 Inbox: {inbox}")
+    print(f"📤 Metadata output: {meta_out}")
+    print(f"🗃️ Source output: {source_out}")
+
     log_file_path = os.path.join(logs, f"log_organize_{int(time.time())}.md")
     with open(log_file_path, "a", encoding="utf-8") as log_f:
         log_f.write(f"# Organize run at {time.time()}\n\n")
 
         files = [f for f in os.listdir(inbox) if os.path.isfile(os.path.join(inbox, f))]
         log_f.write(f"Found files in Inbox: {files}\n")
+        print(f"📂 Files found: {files}")
 
         for filename in files:
             try:
-                log_f.write(f"Processing {filename}\n")
+                log_f.write(f"\n\n## Processing {filename}\n")
+                print(f"⚙️ Processing {filename}")
 
                 input_path = os.path.join(inbox, filename)
                 file_type = infer_file_type(filename)
@@ -134,13 +140,13 @@ def organize_files():
                 os.makedirs(dest_dir, exist_ok=True)
                 shutil.move(input_path, os.path.join(dest_dir, filename))
 
-                log_f.write(f"Metadata saved: {md_filename}\n")
-                log_f.write(f"Source moved to: {file_type}/{filename}\n\n")
+                log_f.write(f"✅ Metadata saved: {md_filename}\n")
+                log_f.write(f"✅ File moved to: {file_type}/{filename}\n")
+                print(f"✅ Done: {filename} → {md_filename}")
 
             except Exception as e:
-                log_f.write(f"# Error processing {filename} at {time.time()}\n")
-                log_f.write(f"Message: {str(e)}\n\n")
+                log_f.write(f"❌ Error processing {filename}: {str(e)}\n")
+                print(f"❌ ERROR: {filename} — {e}")
                 continue
 
-if __name__ == "__main__":
-    organize_files()
+    print("🏁 organize_files() complete.")
