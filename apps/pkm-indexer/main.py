@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from fastapi.responses import HTMLResponse
 from organize import organize_files
 from index import indexKB, searchKB
 import os
@@ -38,7 +39,7 @@ async def get_staging():
     metadata_path = "pkm/Processed/Metadata"
     os.makedirs(metadata_path, exist_ok=True)
     files = []
-    for md_file in [f for f in os.listdir(metadata_path) if f.endswith(".md")]:
+    for md_file in [f for f in os.listdir(metadata_path) if md_file.endswith(".md")]:
         with open(os.path.join(metadata_path, md_file), "r", encoding="utf-8") as f:
             post = frontmatter.load(f)
             files.append({
@@ -114,16 +115,33 @@ async def get_file_content(folder: str):
     file_path = os.path.join("pkm", *folder.split("/"))
     if not os.path.isfile(file_path):
         raise HTTPException(status_code=404, detail="File not found")
-
     try:
         with open(file_path, "r", encoding="utf-8") as f:
             return f.read()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Could not read file: {e}")
 
-@app.get("/")
-async def root():
-    return {"message": "PKM Indexer API is running."}
+@app.get("/logs", response_class=HTMLResponse)
+async def log_index():
+    log_dir = "pkm/Logs"
+    if not os.path.exists(log_dir):
+        return "<h2>No logs found</h2>"
+    links = []
+    for f in sorted(os.listdir(log_dir), reverse=True):
+        if f.endswith(".md"):
+            url = f"/file-content/Logs/{f}"
+            links.append(f'<li><a href="{url}">{f}</a></li>')
+    return f"<h2>Log Files</h2><ul>{''.join(links)}</ul>"
+
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    links = [
+        '<li><a href="/staging">Review Staging Files</a></li>',
+        '<li><a href="/logs">View Logs</a></li>',
+        '<li><a href="/files/Processed/Metadata">View Metadata Files</a></li>',
+        '<li><a href="/files/Processed/Sources">View Source Files</a></li>'
+    ]
+    return f"<h2>PKM System Navigation</h2><ul>{''.join(links)}</ul>"
 
 @app.on_event("startup")
 async def startup_event():

@@ -14,6 +14,58 @@ The long-term vision includes automatic ingestion from `~/OneDrive/PKM/Inbox`, p
 
 All data will be transformed into structured markdown metadata records containing AI-enriched summaries, tags, and references to the original source files. Text content is included only when appropriate. The system will be simple, extensible, and voice-enabled (in Phase 2).
 
+**Personal Knowledge Management (PKM) System — Overview (last updated: 2024-05-18 20:25 CET)**
+
+---
+
+### **Purpose**
+
+The PKM system is designed to help a non-coder manage personal knowledge across Windows PC and iOS (iPhone, Apple Watch) using a Progressive Web App (PWA). It enables capture, organization, review, and querying of diverse data types—notes, PDFs, URLs, videos, audio, and more—using AI for metadata generation and semantic search.
+
+The long-term vision includes automatic ingestion from `~/OneDrive/PKM/Inbox`, populated via:
+
+* iOS Drafts app
+* Manual file uploads
+* Email Shortcuts (Phase 2)
+
+All data will be transformed into structured markdown metadata records containing AI-enriched extracts (summaries), tags, and references to the original source files. Text content is included only when appropriate. The system will be simple, extensible, and voice-enabled (in Phase 2).
+
+---
+
+### **Enhancement Ideas & Future Considerations**
+
+#### **1. Summary as Extract**
+
+* The `summary` field is now considered an **AI-generated extract** of the file — concise but semantically rich.
+* Especially for long or non-text documents, the extract should convey the core insight without referencing structure or formatting.
+* The extract may include direct quotes or synthesized statements from the full source, and will serve as the basis for indexing and semantic search.
+
+#### **2. Thematic Taxonomy (Beyond Tags)**
+
+* Introduce a curated **theme classification layer** in addition to freeform tags.
+* Themes represent broader conceptual categories such as "Systems Thinking", "Ethics", "Personal Development", "Military Strategy".
+* Each metadata file may include a new `themes:` field (distinct from `tags:`).
+* A `themes.json` file will serve as the editable, centralized theme taxonomy.
+* The user will periodically review and update the theme list via a dashboard or text interface.
+* Over time, AI extracts will be prompted with awareness of current themes to improve classification precision.
+
+#### **3. Centralized Theme Awareness for LLM Prompts**
+
+* During `organize.py` summarization, the prompt will optionally include a reference to the current set of themes.
+* Example: "Given the following content and the following themes, extract a summary and assign the most relevant theme(s)..."
+* This helps the LLM converge toward human-curated structure without enforcing rigid taxonomy.
+
+#### **4. Additional Enhancements (Candidate List)**
+
+* Multi-lingual support and language detection
+* User-defined metadata fields (e.g. `confidence_score`, `intent`, `relevance`)
+* Version history and editing logs for metadata records
+* Bulk reprocessing (e.g. re-summarize all metadata with a new model or updated prompt)
+* Integration with Notion, Obsidian, or Logseq for surfacing extracts
+* Web UI to browse metadata records by theme or source file type
+* Summary quality scoring (manual or AI-assisted)
+* Optional summary auto-promotion: extract → permanent note (via trigger or rule)
+
 ---
 
 ### **Architecture**
