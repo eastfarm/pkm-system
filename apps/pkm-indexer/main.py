@@ -1,3 +1,4 @@
+# File: apps/pkm-indexer/main.py
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import RedirectResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -81,81 +82,157 @@ def find_or_create_folder(service, parent_id, name):
 
 @app.post("/sync-drive")
 def sync_drive():
-    LOCAL_INBOX = "pkm/Inbox"
-    LOCAL_METADATA = "pkm/Processed/Metadata"
-    LOCAL_SOURCES = "pkm/Processed/Sources"
-    downloaded = []
-    uploaded = []
+    try:
+        LOCAL_INBOX = "pkm/Inbox"
+        LOCAL_METADATA = "pkm/Processed/Metadata"
+        LOCAL_SOURCES = "pkm/Processed/Sources"
+        downloaded = []
+        uploaded = []
+        debug_info = {
+            "token_exists": False,
+            "drive_folders": [],
+            "inbox_files_count": 0,
+            "error": None
+        }
 
-    token_json = os.environ.get("GOOGLE_TOKEN_JSON")
-    if not token_json:
-        return {"status": "Failed - Google Drive credentials missing"}
+        token_json = os.environ.get("GOOGLE_TOKEN_JSON")
+        if not token_json:
+            return {"status": "Failed - Google Drive credentials missing", "debug": debug_info}
+            
+        debug_info["token_exists"] = True
         
-    creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
-    service = build('drive', 'v3', credentials=creds)
-
-    # 1. Locate PKM + subfolders
-    pkm_id = find_or_create_folder(service, "root", "PKM")
-    inbox_id = find_or_create_folder(service, pkm_id, "Inbox")
-    processed_id = find_or_create_folder(service, pkm_id, "Processed")
-    metadata_id = find_or_create_folder(service, processed_id, "Metadata")
-    sources_id = find_or_create_folder(service, processed_id, "Sources")
-
-    # 2. Download files from /Inbox
-    query_files = f"'{inbox_id}' in parents and trashed = false"
-    files = service.files().list(q=query_files, fields="files(id, name)").execute().get('files', [])
-    os.makedirs(LOCAL_INBOX, exist_ok=True)
-
-    for f in files:
-        file_id = f['id']
-        file_name = f['name']
-        local_path = os.path.join(LOCAL_INBOX, file_name)
-        request = service.files().get_media(fileId=file_id)
-        with io.FileIO(local_path, 'wb') as fh:
-            downloader = MediaIoBaseDownload(fh, request)
-            done = False
-            while not done:
-                _, done = downloader.next_chunk()
-        downloaded.append((file_id, file_name))
-
-    # 3. Run metadata extraction
-    organize_files()
-
-    # 4. Upload files and metadata
-    for file_id, file_name in downloaded:
-        base = os.path.splitext(file_name)[0]
-        md_filename = next((f for f in os.listdir(LOCAL_METADATA) if base in f), None)
-        local_md_path = os.path.join(LOCAL_METADATA, md_filename) if md_filename else None
-        file_type = infer_file_type(file_name)
-        local_original_path = os.path.join(LOCAL_SOURCES, file_type, file_name)
-
         try:
-            # Upload metadata
-            if local_md_path and os.path.exists(local_md_path):
-                upload_file_to_drive(service, local_md_path, md_filename, metadata_id)
+            creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
+            service = build('drive', 'v3', credentials=creds)
+        except Exception as auth_error:
+            debug_info["error"] = f"Authentication error: {str(auth_error)}"
+            return {"status": "Failed to authenticate with Google Drive", "debug": debug_info}
+
+        # 1. Locate PKM + subfolders
+        try:
+            # First, try to find the PKM folder
+            query_pkm = "name='PKM' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            pkm_results = service.files().list(q=query_pkm, fields="files(id,name)").execute()
+            pkm_folders = pkm_results.get('files', [])
+            
+            if not pkm_folders:
+                # PKM folder doesn't exist, create it
+                pkm_id = find_or_create_folder(service, "root", "PKM")
+                debug_info["drive_folders"].append(f"Created PKM folder: {pkm_id}")
             else:
-                raise Exception(f"Missing .md file for {file_name}")
-
-            # Upload original
-            if os.path.exists(local_original_path):
-                ft_folder_id = find_or_create_folder(service, sources_id, file_type)
-                upload_file_to_drive(service, local_original_path, file_name, ft_folder_id)
+                pkm_id = pkm_folders[0]['id']
+                debug_info["drive_folders"].append(f"Found PKM folder: {pkm_id}")
+            
+            # Now find or create the Inbox folder
+            query_inbox = f"'{pkm_id}' in parents and name='Inbox' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            inbox_results = service.files().list(q=query_inbox, fields="files(id,name)").execute()
+            inbox_folders = inbox_results.get('files', [])
+            
+            if not inbox_folders:
+                # Inbox folder doesn't exist, create it
+                inbox_id = find_or_create_folder(service, pkm_id, "Inbox")
+                debug_info["drive_folders"].append(f"Created Inbox folder: {inbox_id}")
             else:
-                raise Exception(f"Missing source file for {file_name}")
+                inbox_id = inbox_folders[0]['id']
+                debug_info["drive_folders"].append(f"Found Inbox folder: {inbox_id}")
+            
+            # Continue with other folders
+            processed_id = find_or_create_folder(service, pkm_id, "Processed")
+            metadata_id = find_or_create_folder(service, processed_id, "Metadata")
+            sources_id = find_or_create_folder(service, processed_id, "Sources")
+            
+            debug_info["drive_folders"].append(f"Processed folder: {processed_id}")
+            debug_info["drive_folders"].append(f"Metadata folder: {metadata_id}")
+            debug_info["drive_folders"].append(f"Sources folder: {sources_id}")
+        except Exception as folder_error:
+            debug_info["error"] = f"Folder creation error: {str(folder_error)}"
+            return {"status": "Failed to locate or create Google Drive folders", "debug": debug_info}
 
-            # Delete from Inbox (only if both uploads succeeded)
-            service.files().delete(fileId=file_id).execute()
-            uploaded.append(file_name)
+        # 2. Download files from /Inbox
+        try:
+            query_files = f"'{inbox_id}' in parents and trashed = false"
+            files_result = service.files().list(q=query_files, fields="files(id, name)").execute()
+            files = files_result.get('files', [])
+            
+            debug_info["inbox_files_count"] = len(files)
+            
+            if not files:
+                return {
+                    "status": "✅ Synced - No files found in Google Drive Inbox folder",
+                    "debug": debug_info
+                }
+            
+            os.makedirs(LOCAL_INBOX, exist_ok=True)
 
-        except Exception as e:
-            print(f"❌ Failed to upload/delete {file_name}: {e}")
+            for f in files:
+                file_id = f['id']
+                file_name = f['name']
+                local_path = os.path.join(LOCAL_INBOX, file_name)
+                request = service.files().get_media(fileId=file_id)
+                with io.FileIO(local_path, 'wb') as fh:
+                    downloader = MediaIoBaseDownload(fh, request)
+                    done = False
+                    while not done:
+                        _, done = downloader.next_chunk()
+                downloaded.append((file_id, file_name))
+        except Exception as download_error:
+            debug_info["error"] = f"Download error: {str(download_error)}"
+            return {"status": "Failed to download files from Google Drive", "debug": debug_info}
 
-    return {
-        "status": f"✅ Synced and organized - {len(uploaded)} files processed",
-        "downloaded": [f[1] for f in downloaded],
-        "uploaded": uploaded,
-        "skipped": [f[1] for f in downloaded if f[1] not in uploaded]
-    }
+        # 3. Run metadata extraction
+        try:
+            organize_files()
+        except Exception as organize_error:
+            debug_info["error"] = f"Organization error: {str(organize_error)}"
+            return {
+                "status": "Files downloaded but processing failed", 
+                "downloaded": [f[1] for f in downloaded],
+                "debug": debug_info
+            }
+
+        # 4. Upload files and metadata
+        for file_id, file_name in downloaded:
+            base = os.path.splitext(file_name)[0]
+            md_filename = next((f for f in os.listdir(LOCAL_METADATA) if base in f), None)
+            local_md_path = os.path.join(LOCAL_METADATA, md_filename) if md_filename else None
+            file_type = infer_file_type(file_name)
+            local_original_path = os.path.join(LOCAL_SOURCES, file_type, file_name)
+
+            try:
+                # Upload metadata
+                if local_md_path and os.path.exists(local_md_path):
+                    upload_file_to_drive(service, local_md_path, md_filename, metadata_id)
+                else:
+                    raise Exception(f"Missing .md file for {file_name}")
+
+                # Upload original
+                if os.path.exists(local_original_path):
+                    ft_folder_id = find_or_create_folder(service, sources_id, file_type)
+                    upload_file_to_drive(service, local_original_path, file_name, ft_folder_id)
+                else:
+                    raise Exception(f"Missing source file for {file_name}")
+
+                # Delete from Inbox (only if both uploads succeeded)
+                service.files().delete(fileId=file_id).execute()
+                uploaded.append(file_name)
+
+            except Exception as e:
+                debug_info["error"] = f"Upload error for {file_name}: {str(e)}"
+                print(f"❌ Failed to upload/delete {file_name}: {e}")
+
+        return {
+            "status": f"✅ Synced and organized - {len(uploaded)} files processed",
+            "downloaded": [f[1] for f in downloaded],
+            "uploaded": uploaded,
+            "skipped": [f[1] for f in downloaded if f[1] not in uploaded],
+            "debug": debug_info
+        }
+    except Exception as e:
+        return {
+            "status": f"❌ Sync failed: {str(e)}",
+            "error": str(e)
+        }
+
 
 # ─── UTILITIES ─────────────────────────────────────────────────────
 

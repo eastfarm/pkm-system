@@ -1,3 +1,4 @@
+// File: apps/pkm-app/pages/index.js
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import Link from 'next/link';
@@ -84,11 +85,32 @@ export default function Home() {
     setSyncStatus('Syncing with Google Drive...');
     try {
       const response = await axios.post('https://pkm-indexer-production.up.railway.app/sync-drive');
-      setSyncStatus(`✅ ${response.data.status}`);
+      
+      // Handle response with debug info
+      if (response.data.debug) {
+        console.log("Sync debug info:", response.data.debug);
+        
+        // Check for specific issues
+        if (response.data.debug.error) {
+          setSyncStatus(`❌ ${response.data.status}: ${response.data.debug.error}`);
+        } else if (response.data.debug.inbox_files_count === 0) {
+          setSyncStatus(`ℹ️ ${response.data.status}`);
+        } else {
+          setSyncStatus(`✅ ${response.data.status}`);
+        }
+      } else {
+        setSyncStatus(`✅ ${response.data.status}`);
+      }
+      
       // Refresh file stats after sync
       fetchFileStats();
     } catch (error) {
-      setSyncStatus(`❌ Failed: ${error.message}`);
+      console.error("Sync error:", error);
+      if (error.response && error.response.data) {
+        setSyncStatus(`❌ Failed: ${error.response.data.status || error.message}`);
+      } else {
+        setSyncStatus(`❌ Failed: ${error.message}`);
+      }
     } finally {
       setIsSyncing(false);
     }
