@@ -1,4 +1,132 @@
-# File: apps/pkm-indexer/main.py
+@app.post("/sync-drive")
+def sync_drive():
+    try:
+        # Create a log directory if it doesn't exist
+        logs_path = "pkm/Logs"
+        os.makedirs(logs_path, exist_ok=True)
+        timestamp = int(time.time())
+        
+        # Start a log entry for this sync operation
+        with open(f"{logs_path}/sync_{timestamp}.md", "w", encoding="utf-8") as log_f:
+            log_f.write(f"# Google Drive Sync at {datetime.now().isoformat()}\n\n")
+            
+            LOCAL_INBOX = "pkm/Inbox"
+            LOCAL_METADATA = "pkm/Processed/Metadata"
+            LOCAL_SOURCES = "pkm/Processed/Sources"
+            downloaded = []
+            uploaded = []
+            debug_info = {
+                "token_exists": False,
+                "drive_folders": [],
+                "inbox_files_count": 0,
+                "error": None
+            }
+
+            # Ensure local directories exist
+            os.makedirs(LOCAL_INBOX, exist_ok=True)
+            os.makedirs(LOCAL_METADATA, exist_ok=True)
+            os.makedirs(LOCAL_SOURCES, exist_ok=True)
+            
+            token_json = os.environ.get("GOOGLE_TOKEN_JSON")
+            if not token_json:
+                log_f.write("❌ Failed - Google Drive credentials missing\n")
+                return {"status": "Failed - Google Drive credentials missing", "debug": debug_info}
+                
+            debug_info["token_exists"] = True
+            log_f.write("✅ Google Drive credentials found\n")
+            
+            try:
+                creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
+                service = build('drive', 'v3', credentials=creds)
+                log_f.write("✅ Authenticated with Google Drive\n")
+            except Exception as auth_error:
+                log_f.write(f"❌ Authentication error: {str(auth_error)}\n")
+                debug_info["error"] = f"Authentication error: {str(auth_error)}"
+                return {"status": "Failed to authenticate with Google Drive", "debug": debug_info}
+
+            # 1. Locate PKM + subfolders
+            try:
+                # Find or create the PKM folder
+                pkm_id = find_pkm_folder(service)
+                debug_info["drive_folders"].append(f"PKM folder: {pkm_id}")
+                log_f.write(f"✅ Found/created PKM folder: {pkm_id}\n")
+                
+                # Find or create the Inbox folder
+                inbox_id = find_inbox_folder(service, pkm_id)
+                debug_info["drive_folders"].append(f"Inbox folder: {inbox_id}")
+                log_f.write(f"✅ Found/created Inbox folder: {inbox_id}\n")
+                
+                # Update webhook state with inbox ID if needed
+                if inbox_id and not webhook_state["inbox_id"]:
+                    webhook_state["inbox_id"] = inbox_id
+                
+                # Continue with other folders
+                processed_id = find_or_create_folder(service, pkm_id, "Processed")
+                metadata_id = find_or_create_folder(service, processed_id, "Metadata")
+                sources_id = find_or_create_folder(service, processed_id, "Sources")
+                
+                debug_info["drive_folders"].append(f"Processed folder: {processed_id}")
+                debug_info["drive_folders"].append(f"Metadata folder: {metadata_id}")
+                debug_info["drive_folders"].append(f"Sources folder: {sources_id}")
+                log_f.write(f"✅ All required folders exist/created in Google Drive\n")
+            except Exception as folder_error:
+                log_f.write(f"❌ Folder creation error: {str(folder_error)}\n")
+                debug_info["error"] = f"Folder creation error: {str(folder_error)}"
+                return {"status": "Failed to locate or create Google Drive folders", "debug": debug_info}
+
+            # 2. Download files from /Inbox
+            try:
+                query_files = f"'{inbox_id}' in parents and trashed = false"
+                files_result = service.files().list(q=query_files, fields="files(id, name)").execute()
+                files = files_result.get('files', [])
+                
+                debug_info["inbox_files_count"] = len(files)
+                log_f.write(f"ℹ️ Found {len(files)} files in Google Drive Inbox\n")
+                
+                if not files:
+                    log_f.write("ℹ️ No files to process in Google Drive Inbox\n")
+                    return {
+                        "status": "✅ Synced - No files found in Google Drive Inbox folder",
+                        "debug": debug_info
+                    }
+                
+                # List the files found
+                log_f.write("\n## Files found in Google Drive Inbox\n\n")
+                for f in files:
+                    log_f.write(f"- {f['name']} (ID: {f['id']})\n")
+                
+                log_f.write("\n## Downloading files\n\n")
+                
+                for f in files:
+                    file_id = f['id']
+                    file_name = f['name']
+                    local_path = os.path.join(LOCAL_INBOX, file_name)
+                    log_f.write(f"Downloading {file_name}... ")
+                    try:
+                        request = service.files().get_media(fileId=file_id)
+                        with io.FileIO(local_path, 'wb') as fh:
+                            downloader = MediaIoBaseDownload(fh, request)
+                            done = False
+                            while not done:
+                                _, done = downloader.next_chunk()
+                        downloaded.append((file_id, file_name))
+                        log_f.write(f"✅ Success\n")
+                    except Exception as individual_download_error:
+                        log_f.write(f"❌ Failed: {str(individual_download_error)}\n")
+                
+                log_f.write(f"\n✅ Downloaded {len(downloaded)} files from Google Drive Inbox\n")
+            except Exception as download_error:
+                log_f.write(f"❌ Download error: {str(download_error)}\n")
+                debug_info["error"] = f"Download error: {str(download_error)}"
+                return {"status": "Failed to download files from Google Drive", "debug": debug_info}
+
+            # 3. Run metadata extraction
+            try:
+                log_f.write("\n## Processing files with organize_files()\n\n")
+                organize_result = organize_files()
+                log_f.write(f"✅ organize_files() processed {organize_result['success_count']} files successfully\n")
+                if organize_result['failed_files']:
+                    log_f.write(f"⚠️ {len(organize_result['failed_files'])}# File: apps/pkm-indexer/main.py
 from fastapi import FastAPI, Request, Response, BackgroundTasks
 from fastapi.responses import RedirectResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +136,7 @@ import json
 import base64
 import asyncio
 import uuid
+import time
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -117,7 +246,7 @@ async def handle_drive_webhook(request: Request, background_tasks: BackgroundTas
     logger.info(f"Received webhook notification: {resource_state} for channel {channel_id}")
     
     # Check resource state - we're interested in 'change' events
-    if resource_state in ["sync", "change"]:
+    if resource_state in ["sync", "change", "update"]:
         # Process the notification in the background
         background_tasks.add_task(process_drive_changes)
         
@@ -130,14 +259,73 @@ async def process_drive_changes():
     """
     logger.info("Processing Drive changes...")
     try:
+        # Make sure logs directory exists
+        log_dir = "pkm/Logs"
+        os.makedirs(log_dir, exist_ok=True)
+        timestamp = int(time.time())
+        
+        # Create an initial processing log
+        with open(f"{log_dir}/webhook_process_{timestamp}.md", "w", encoding="utf-8") as f:
+            f.write(f"# Webhook Processing Started at {datetime.now().isoformat()}\n\n")
+        
         # Call the sync_drive function to process files
         result = sync_drive()
-        if isinstance(result, dict) and result.get("uploaded"):
-            logger.info(f"Webhook sync completed: {len(result.get('uploaded', []))} files processed")
-        else:
-            logger.info(f"Webhook sync completed: {result}")
+        
+        # Log the result regardless of success/failure
+        with open(f"{log_dir}/webhook_sync_{timestamp}.md", "w", encoding="utf-8") as f:
+            f.write(f"# Webhook Sync at {datetime.now().isoformat()}\n\n")
+            f.write(f"## Result\n\n")
+            if isinstance(result, dict):
+                f.write(json.dumps(result, indent=2))
+                
+                # Log detailed debug info if available
+                if 'debug' in result:
+                    f.write("\n\n## Debug Info\n\n")
+                    f.write(json.dumps(result['debug'], indent=2))
+                    
+                # Log success or failure count
+                if result.get("uploaded"):
+                    logger.info(f"Webhook sync completed: {len(result.get('uploaded', []))} files processed")
+                    f.write(f"\n\n## Processed Files\n\n")
+                    for filename in result.get("uploaded", []):
+                        f.write(f"- {filename}\n")
+                elif result.get("status"):
+                    logger.info(f"Webhook sync completed with status: {result.get('status')}")
+            else:
+                f.write(str(result))
+                
+        # If we have downloaded files but no uploads, something likely went wrong
+        if isinstance(result, dict) and result.get("downloaded") and not result.get("uploaded"):
+            skipped = result.get("skipped", [])
+            if skipped:
+                logger.error(f"Files were downloaded but not processed: {skipped}")
+                with open(f"{log_dir}/webhook_warning_{timestamp}.md", "w", encoding="utf-8") as f:
+                    f.write(f"# Webhook Warning at {datetime.now().isoformat()}\n\n")
+                    f.write(f"## Files Downloaded But Not Processed\n\n")
+                    for filename in skipped:
+                        f.write(f"- {filename}\n")
+                    if 'error' in result:
+                        f.write(f"\n## Error\n\n{result['error']}\n")
+                    if 'debug' in result and result['debug'].get('error'):
+                        f.write(f"\n## Debug Error\n\n{result['debug']['error']}\n")
     except Exception as e:
         logger.error(f"Error processing Drive changes: {str(e)}")
+        
+        # Create a detailed error log
+        try:
+            log_dir = "pkm/Logs"
+            os.makedirs(log_dir, exist_ok=True)
+            timestamp = int(time.time())
+            with open(f"{log_dir}/webhook_error_{timestamp}.md", "w", encoding="utf-8") as f:
+                f.write(f"# Webhook Error at {datetime.now().isoformat()}\n\n")
+                f.write(f"## Error\n\n")
+                f.write(str(e))
+                f.write("\n\n## Traceback\n\n```\n")
+                import traceback
+                f.write(traceback.format_exc())
+                f.write("\n```\n")
+        except Exception as log_error:
+            logger.error(f"Failed to create error log: {log_error}")
 
 def setup_webhook_registration():
     """
