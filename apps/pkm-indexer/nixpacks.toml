@@ -1,6 +1,15 @@
 [phases.setup]
-nixPkgs = ["python310", "gcc"]
-aptPkgs = ["build-essential", "libgomp1", "cmake", "swig", "libatlas-base-dev", "gfortran", "libblas-dev", "libeigen3-dev"]
+nixPkgs = ["python310", "gcc", "tesseract"]
+aptPkgs = [
+  "build-essential",
+  "libgomp1",
+  "cmake",
+  "swig",
+  "libatlas-base-dev",
+  "gfortran",
+  "libblas-dev",
+  "libeigen3-dev"
+]
 
 [phases.build]
 cmds = [

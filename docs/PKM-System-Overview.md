@@ -1,4 +1,4 @@
-**Personal Knowledge Management (PKM) System — Overview (last updated: 2024-05-18 20:25 CET)**
+**Personal Knowledge Management (PKM) System — Overview (last updated: 2025-05-19 18:42 CET)**
 
 ---
 
@@ -6,7 +6,7 @@
 
 The PKM system is designed to help a non-coder manage personal knowledge across Windows PC and iOS (iPhone, Apple Watch) using a Progressive Web App (PWA). It enables capture, organization, review, and querying of diverse data types—notes, PDFs, URLs, videos, audio, and more—using AI for metadata generation and semantic search.
 
-The long-term vision includes automatic ingestion from `~/OneDrive/PKM/Inbox`, populated via:
+The long-term vision includes automatic ingestion from `~/GoogleDrive/PKM/Inbox`, populated via:
 
 * iOS Drafts app
 * Manual file uploads
@@ -51,29 +51,11 @@ All data will be transformed into structured markdown metadata records containin
 
 * Reprocessing will not be implemented in the MVP, but all systems (metadata format, staging UI, and LLM prompt structure) should anticipate its future role.
 
-* Replace the current "Approve" model with two options: **Save** and **Reprocess**.
+#### **1. Extract Title and Content**
 
-* **Save** finalizes the current extract, tags, and metadata.
-
-* **Reprocess** allows the user to:
-
-  * Add clarifying instructions (e.g. “This is a quote from a lecture; just tag it”)
-  * Trigger a new LLM extract or retry with a different method
-  * Eventually choose from prompt profiles (e.g. `quote`, `memo`, `deep_analysis`)
-
-* This pattern supports:
-
-  * Recovery from failed extractions
-  * Higher-quality metadata over time
-  * User involvement in steering extract quality
-
-* Reprocessing will not be implemented in the MVP, but all systems (metadata format, staging UI, and LLM prompt structure) should anticipate its future role.
-
-#### **1. Extract as Primary Field**
-
-* The `extract` field replaces `summary` and is the primary semantic output for each document.
-* An extract captures the document's meaning or core insights, ignoring format and technical structure.
-* All search and LLM prompt chaining will operate over extracts as the core knowledge layer.
+* The extract is now split into `extract_title` and `extract_content`.
+* `extract_title` can be inferred by the AI or taken from document content if clearly present.
+* `extract_content` captures the semantic core of the file.
 
 #### **2. Thematic Taxonomy (Beyond Tags)**
 
@@ -87,64 +69,59 @@ All data will be transformed into structured markdown metadata records containin
 #### **3. Centralized Theme Awareness for LLM Prompts**
 
 * During `organize.py` summarization, the prompt will optionally include a reference to the current set of themes.
-* Example: "Given the following content and the following themes, extract a summary and assign the most relevant theme(s)..."
-* This helps the LLM converge toward human-curated structure without enforcing rigid taxonomy.
 
 #### **4. Differentiated Document Processing Pipeline**
 
-* Different file types and content genres require different extraction strategies:
+* The system supports different strategies for different file types:
 
-  * 🧠 A **quote** requires no summarization — only accurate tagging and storage in the quote archive.
-  * 📑 A **longform research article** requires semantic structuring, argument distillation, and page-aware summarization.
-  * 🎧 An **audio transcript** may require preprocessing (e.g. diarization) before extract creation.
-* In the future, document type detection (via filename, file type, or AI inference) will route documents through tailored prompt pipelines.
-* Prompt selection and chunking strategy will become programmable via rules or configuration files (e.g. `prompt_profile: "quote"` vs. `"research"`).
+  * 🧠 Quotes are tagged and archived.
+  * 📑 Research articles are semantically summarized.
+  * 🎧 Audio is preprocessed.
+  * 🖼 Images use OCR (`pytesseract`) to extract readable text.
+  * 🌐 URLs are detected and enriched using `requests` and `BeautifulSoup`.
 
 #### **5. Additional Enhancements (Candidate List)**
 
-* Multi-lingual support and language detection
-* User-defined metadata fields (e.g. `confidence_score`, `intent`, `relevance`)
-* Version history and editing logs for metadata records
-* Bulk reprocessing (e.g. re-extract with a new model or updated prompt)
-* Integration with Notion, Obsidian, or Logseq for surfacing extracts
-* Web UI to browse metadata records by theme or source file type
-* Extract quality scoring (manual or AI-assisted)
-* Optional extract auto-promotion: extract → permanent note (via trigger or rule)
+* Multi-lingual support
+* User-defined metadata fields
+* Version history
+* Bulk reprocessing
+* Integration with tools like Notion or Obsidian
+* Extract quality scoring
 
 ---
 
 ### **Architecture**
 
-#### **Cloud-Based OneDrive Integration (Planned)**
+#### **Cloud-Based Google Drive Integration**
 
-* The system will use the Microsoft Graph API to interface directly with OneDrive.
-* Files will be read from `/PKM/Inbox` without being moved or deleted until successful processing is confirmed.
-* For each file in OneDrive:
+* Files are pulled from `/PKM/Inbox` via the Google Drive API
+* Extracted metadata is saved locally, then uploaded to:
 
-  1. A copy is downloaded for processing.
-  2. Metadata is generated using `organize.py` (including extract, tags, etc.).
-  3. The resulting `.md` file is uploaded to `/PKM/Processed/Metadata/`
-  4. The original file is uploaded to `/PKM/Processed/Sources/<filetype>/`
-  5. Only after both uploads succeed, the file is removed from `/PKM/Inbox`
-* This ensures data safety and consistency, avoiding the risk of lost or partially processed files.
-* In the future, failed attempts can be tagged or moved to a `/PKM/Errors/` folder for review.
-* Authentication will use Microsoft Graph’s device code flow or secure app credentials stored in Railway environment variables.
+  * `/PKM/Processed/Metadata/` (markdown files)
+  * `/PKM/Processed/Sources/<filetype>/` (original files)
+* Original files in `/PKM/Inbox` are only deleted if both uploads succeed
+* `GOOGLE_TOKEN_JSON` is stored in Railway env vars for OAuth reuse
 
-#### **MVP Improvements Implemented**
+#### **/sync-drive Endpoint**
 
-* File-type-specific extraction is now in place:
+* Can be triggered manually via API or frontend button
+* Will later be run on a schedule (e.g. every 5–15 minutes)
+* Modular helper functions manage Drive folder creation, upload, and conditional deletion
 
-  * `.pdf` files are parsed using `pdfplumber`
-  * Text files are decoded as UTF-8 with fallback
-* The metadata schema now includes:
+#### **Backend + Frontend Responsibilities**
 
-  * `parse_status`: `success` or `failed`
-  * `extraction_method`: `pdfplumber`, `decode`, etc.
-* LLM prompts have been rephrased to extract meaning rather than format
-* Errors and raw LLM outputs are logged in detail for debugging
-* The backend now supports reliable extract generation from real-world PDFs
+All backend responsibilities and frontend staging behavior (as described earlier) remain unchanged, with the addition of:
 
-#### **Backend (pkm-indexer)**
+* OCR for `.jpg`, `.png`, etc.
+* URL parsing and inline enrichment
+* Distinct `extract_title` + `extract_content`
+
+The system now fully supports a Google Drive–based, LLM-powered, multimodal PKM ingestion pipeline with extensible automation and review controls.
+
+---
+
+### **Backend (pkm-indexer)**
 
 * **Stack**: Python (FastAPI), `apscheduler`, `frontmatter`, `shutil`, `openai`, `faiss`
 
@@ -152,33 +129,33 @@ All data will be transformed into structured markdown metadata records containin
 
 * **Core Responsibilities**:
 
-  * Monitor/sync files from Inbox
+  * Monitor/sync files from Google Drive Inbox
   * Generate rich metadata extracts using OpenAI
-  * Extract and summarize content from PDFs, audio, URLs, and markdown
+  * Extract and summarize content from PDFs, audio, images, URLs, and markdown
   * Store structured `.md` metadata files with frontmatter and optional content
   * Serve metadata extracts via API and enable approval/review
   * Index extracts and metadata fields into FAISS for retrieval
 
 * **Key Modules**:
 
-  * `main.py`: API endpoints `/staging`, `/approve`, `/trigger-organize`, `/files/{folder}`, `/file-content/{folder}/{filename}`, `/upload/{folder}`
+  * `main.py`: API endpoints `/staging`, `/approve`, `/trigger-organize`, `/sync-drive`, `/upload/{folder}`
   * `organize.py`: Processes files, generates AI extracts, injects metadata
-  * `index.py`: Indexes extracts and metadata (not full file bodies)
+  * `index.py`: Indexes extracts and metadata
 
-* **File Structure for OneDrive Compatibility**:
+* **File Structure (Local Runtime)**:
 
-  * `Inbox/` — where unprocessed uploads arrive
+  * `Inbox/` — where downloaded files land from Google Drive
   * `Processed/`
 
     * `Metadata/` — YAML frontmatter `.md` records (extracts, tags, source refs)
     * `Sources/` — original files, organized by type (PDFs, images, audio, etc.)
   * `Archive/` — optional long-term storage for previously handled files
 
-  This layout replaces the older `Areas/` model, which conflated category and storage. Categories are now handled via metadata tags and can be visualized dynamically rather than being embedded in the directory structure.
-
 * **Scalability Note**: In Phase 2, content chunking and document splitting will support indexing long PDFs or audio transcripts across multiple `.md` metadata records.
 
-#### **Frontend (pkm-app)**
+---
+
+### **Frontend (pkm-app)**
 
 * **Stack**: Next.js PWA, React, Axios
 
@@ -199,8 +176,7 @@ All data will be transformed into structured markdown metadata records containin
 
 * **Extract-Centric Design**:
 
-  * The `extract` is the primary field shown to the user in the staging interface
-  * If the original file is short and plain-text, the extract may include or resemble its content
+  * The `extract_title` and `extract_content` fields are shown to the user in the staging interface
   * The full `content` field is hidden from the UI unless needed for debugging or future use
   * Future enhancements may include download buttons or side-by-side original content viewers
 
@@ -258,5 +234,3 @@ Remember:
 - Preserve the author's original reasoning process
 - Think step by step through the entire content before summarizing
 ```
-
----
