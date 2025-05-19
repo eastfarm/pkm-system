@@ -25,7 +25,7 @@ CLIENT_CONFIG = {
     }
 }
 
-# ─── AUTH INIT ─────────────────────────────────────────────────────
+# ─── AUTH FLOW ─────────────────────────────────────────────────────
 
 @app.get("/auth/initiate")
 def auth_initiate():
@@ -43,23 +43,20 @@ async def auth_callback(request: Request):
     flow.fetch_token(code=code)
     creds = flow.credentials
 
-    with open("token.json", "w") as token_file:
-        token_file.write(creds.to_json())
+    # ✅ Return the token directly so it can be copied into Railway
+    return JSONResponse(content=json.loads(creds.to_json()))
 
-    return {"status": "✅ Authentication successful. token.json saved."}
-
-# ─── SYNC FROM GOOGLE DRIVE ────────────────────────────────────────
+# ─── GOOGLE DRIVE SYNC ─────────────────────────────────────────────
 
 @app.post("/sync-drive")
 def sync_drive():
-    TOKEN_FILE = 'token.json'
     LOCAL_INBOX = "pkm/Inbox"
     DRIVE_FOLDER_NAME = "Inbox"
 
-    if not os.path.exists(TOKEN_FILE):
-        return {"error": "Missing token.json. Please authenticate first."}
+    if "GOOGLE_TOKEN_JSON" not in os.environ:
+        return {"error": "Missing GOOGLE_TOKEN_JSON env variable"}
 
-    creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    creds = Credentials.from_authorized_user_info(json.loads(os.environ["GOOGLE_TOKEN_JSON"]), SCOPES)
     service = build('drive', 'v3', credentials=creds)
 
     # Find PKM root folder
@@ -97,7 +94,7 @@ def sync_drive():
 
         downloaded.append(file_name)
 
-    # Run metadata extraction
+    # Process files into metadata
     organize_files()
 
     return {
@@ -106,7 +103,7 @@ def sync_drive():
         "organized_count": len(downloaded)
     }
 
-# ─── MOCK STAGING API ──────────────────────────────────────────────
+# ─── STAGING MOCK ENDPOINTS ────────────────────────────────────────
 
 @app.get("/staging")
 def get_staging():
@@ -120,8 +117,3 @@ def approve_file(payload: dict):
 def trigger_organize():
     organize_files()
     return {"status": "triggered"}
-
-@app.get("/debug/token")
-def debug_token():
-    with open("token.json", "r") as f:
-        return json.load(f)
