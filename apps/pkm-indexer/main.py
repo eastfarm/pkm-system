@@ -201,19 +201,24 @@ def sync_drive():
             try:
                 # Upload metadata
                 if local_md_path and os.path.exists(local_md_path):
-                    upload_file_to_drive(service, local_md_path, md_filename, metadata_id)
+                    md_id = upload_file_to_drive(service, local_md_path, md_filename, metadata_id)
+                    debug_info["drive_folders"].append(f"Uploaded metadata: {md_filename} to {metadata_id}")
                 else:
+                    debug_info["error"] = f"Missing .md file for {file_name} at {local_md_path}"
                     raise Exception(f"Missing .md file for {file_name}")
 
                 # Upload original
                 if os.path.exists(local_original_path):
                     ft_folder_id = find_or_create_folder(service, sources_id, file_type)
-                    upload_file_to_drive(service, local_original_path, file_name, ft_folder_id)
+                    orig_id = upload_file_to_drive(service, local_original_path, file_name, ft_folder_id)
+                    debug_info["drive_folders"].append(f"Uploaded source file: {file_name} to {ft_folder_id}")
                 else:
+                    debug_info["error"] = f"Missing source file for {file_name} at {local_original_path}"
                     raise Exception(f"Missing source file for {file_name}")
 
                 # Delete from Inbox (only if both uploads succeeded)
-                service.files().delete(fileId=file_id).execute()
+                delete_result = service.files().delete(fileId=file_id).execute()
+                debug_info["drive_folders"].append(f"Deleted inbox file: {file_id}")
                 uploaded.append(file_name)
 
             except Exception as e:

@@ -6,17 +6,21 @@ import Link from 'next/link';
 export default function Home() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState('');
-  const [file, setFile] = useState(null);
-  const [uploadMessage, setUploadMessage] = useState('');
-  const [organizeStatus, setOrganizeStatus] = useState('');
-  const [isOrganizing, setIsOrganizing] = useState(false);
   const [syncStatus, setSyncStatus] = useState('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [fileStats, setFileStats] = useState(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Fetch file stats when the component loads
   useEffect(() => {
     fetchFileStats();
+    
+    // Set up auto-refresh every 2 minutes
+    const interval = setInterval(() => {
+      fetchFileStats();
+    }, 120000);
+    
+    return () => clearInterval(interval);
   }, []);
 
   const fetchFileStats = async () => {
@@ -37,46 +41,14 @@ export default function Home() {
     }
   };
 
-  const handleFileChange = (e) => {
-    setFile(e.target.files[0]);
-  };
-
-  const handleUpload = async () => {
-    if (!file) {
-      setUploadMessage('Please select a file');
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      const content = e.target.result;
-      try {
-        const response = await axios.post('https://pkm-indexer-production.up.railway.app/upload/Inbox', {
-          filename: file.name,
-          content: content.split(',')[1], // Base64 content (removing "data:..." prefix)
-        });
-        setUploadMessage(response.data.status);
-        // Refresh file stats after upload
-        fetchFileStats();
-      } catch (error) {
-        setUploadMessage('Upload failed: ' + error.message);
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
   const triggerOrganize = async () => {
-    setIsOrganizing(true);
-    setOrganizeStatus('Processing files...');
     try {
       const response = await axios.post('https://pkm-indexer-production.up.railway.app/trigger-organize');
-      setOrganizeStatus(`✅ ${response.data.status}`);
+      alert(`${response.data.status}`);
       // Refresh file stats after organizing
       fetchFileStats();
     } catch (error) {
-      setOrganizeStatus(`❌ Failed: ${error.message}`);
-    } finally {
-      setIsOrganizing(false);
+      alert(`Failed: ${error.message}`);
     }
   };
 
@@ -120,74 +92,60 @@ export default function Home() {
     <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto', fontFamily: 'Arial, sans-serif' }}>
       <h1 style={{ color: '#333', borderBottom: '2px solid #eee', paddingBottom: '10px' }}>Personal Knowledge Management</h1>
       
-      <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
-        <div style={{ flex: '1' }}>
-          <h2>System Controls</h2>
-          <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
-            <button 
-              onClick={triggerOrganize} 
-              disabled={isOrganizing}
-              style={{ 
-                padding: '10px 15px', 
-                backgroundColor: isOrganizing ? '#ccc' : '#4CAF50', 
-                color: 'white', 
-                border: 'none', 
-                borderRadius: '4px',
-                cursor: isOrganizing ? 'not-allowed' : 'pointer'
-              }}
-            >
-              {isOrganizing ? 'Processing...' : 'Process Files'}
-            </button>
-            <button 
-              onClick={triggerDriveSync} 
-              disabled={isSyncing}
-              style={{ 
-                padding: '10px 15px', 
-                backgroundColor: isSyncing ? '#ccc' : '#2196F3', 
-                color: 'white', 
-                border: 'none', 
-                borderRadius: '4px',
-                cursor: isSyncing ? 'not-allowed' : 'pointer'
-              }}
-            >
-              {isSyncing ? 'Syncing...' : 'Sync Google Drive'}
-            </button>
+      {/* Main action button */}
+      <div style={{ 
+        marginBottom: '30px', 
+        display: 'flex', 
+        flexDirection: 'column',
+        alignItems: 'center',
+        backgroundColor: '#f8f9fa', 
+        padding: '20px',
+        borderRadius: '8px',
+        border: '1px solid #e9ecef'
+      }}>
+        <h2 style={{ marginTop: '0', marginBottom: '15px', textAlign: 'center' }}>Google Drive Sync</h2>
+        
+        <button 
+          onClick={triggerDriveSync} 
+          disabled={isSyncing}
+          style={{ 
+            padding: '15px 25px', 
+            backgroundColor: isSyncing ? '#ccc' : '#2196F3', 
+            color: 'white', 
+            border: 'none', 
+            borderRadius: '4px',
+            cursor: isSyncing ? 'not-allowed' : 'pointer',
+            fontSize: '16px',
+            fontWeight: 'bold',
+            boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
+            width: '100%',
+            maxWidth: '300px'
+          }}
+        >
+          {isSyncing ? 'Syncing...' : 'Sync Google Drive'}
+        </button>
+        
+        {syncStatus && 
+          <div style={{ 
+            marginTop: '15px', 
+            padding: '10px', 
+            backgroundColor: syncStatus.includes('✅') ? '#e8f5e9' : 
+                             syncStatus.includes('ℹ️') ? '#e3f2fd' : '#ffebee',
+            borderRadius: '4px',
+            width: '100%',
+            maxWidth: '500px',
+            textAlign: 'center'
+          }}>
+            {syncStatus}
           </div>
-          {organizeStatus && <div style={{ marginBottom: '10px' }}>{organizeStatus}</div>}
-          {syncStatus && <div style={{ marginBottom: '10px' }}>{syncStatus}</div>}
-        </div>
-
-        <div style={{ flex: '1' }}>
-          <h2>Navigation</h2>
-          <ul style={{ listStyleType: 'none', padding: '0' }}>
-            <li style={{ margin: '10px 0' }}>
-              <Link href="/staging" style={{ 
-                display: 'block',
-                padding: '10px', 
-                backgroundColor: '#f0f0f0', 
-                borderRadius: '4px',
-                color: '#333',
-                textDecoration: 'none'
-              }}>
-                🔍 Review Staging Files
-              </Link>
-            </li>
-            <li style={{ margin: '10px 0' }}>
-              <a href="https://pkm-indexer-production.up.railway.app/logs" target="_blank" rel="noopener noreferrer" style={{ 
-                display: 'block',
-                padding: '10px', 
-                backgroundColor: '#f0f0f0', 
-                borderRadius: '4px',
-                color: '#333',
-                textDecoration: 'none'
-              }}>
-                📋 View Processing Logs
-              </a>
-            </li>
-          </ul>
+        }
+        
+        <div style={{ fontSize: '13px', color: '#666', marginTop: '20px', textAlign: 'center' }}>
+          Place files in your Google Drive's <strong>PKM/Inbox</strong> folder and click Sync.
         </div>
       </div>
 
+      {/* System Stats */}
       {fileStats && (
         <div style={{ 
           backgroundColor: '#f9f9f9', 
@@ -209,16 +167,102 @@ export default function Home() {
             <div>
               <h3 style={{ fontSize: '16px', margin: '0 0 5px 0' }}>Sources</h3>
               <p style={{ margin: '0' }}>
-                {fileStats.source_types ? Object.entries(fileStats.source_types).map(([type, count]) => (
-                  `${type}: ${count}`
-                )).join(', ') : 'None'}
+                {fileStats.source_types ? Object.entries(fileStats.source_types).map(([type, count], index) => (
+                  <span key={type}>
+                    {index > 0 && ', '}
+                    {type}: {count}
+                  </span>
+                )) : 'None'}
               </p>
             </div>
           </div>
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+      <div style={{ 
+        display: 'flex', 
+        gap: '20px', 
+        marginBottom: '30px',
+        flexWrap: 'wrap'
+      }}>
+        {/* Navigation */}
+        <div style={{ flex: '1', minWidth: '300px' }}>
+          <h2>Navigation</h2>
+          <ul style={{ listStyleType: 'none', padding: '0' }}>
+            <li style={{ margin: '10px 0' }}>
+              <Link href="/staging" style={{ 
+                display: 'block',
+                padding: '12px', 
+                backgroundColor: '#f0f0f0', 
+                borderRadius: '4px',
+                color: '#333',
+                textDecoration: 'none',
+                fontWeight: 'bold'
+              }}>
+                🔍 Review Staging Files
+              </Link>
+            </li>
+            <li style={{ margin: '10px 0' }}>
+              <a href="https://pkm-indexer-production.up.railway.app/logs" target="_blank" rel="noopener noreferrer" style={{ 
+                display: 'block',
+                padding: '12px', 
+                backgroundColor: '#f0f0f0', 
+                borderRadius: '4px',
+                color: '#333',
+                textDecoration: 'none',
+                fontWeight: 'bold'
+              }}>
+                📋 View Processing Logs
+              </a>
+            </li>
+          </ul>
+          
+          {/* Advanced controls (hidden by default) */}
+          <div style={{ marginTop: '20px' }}>
+            <button 
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              style={{ 
+                backgroundColor: 'transparent',
+                border: 'none',
+                color: '#666',
+                textDecoration: 'underline',
+                cursor: 'pointer',
+                padding: '5px 0'
+              }}
+            >
+              {showAdvanced ? 'Hide Advanced Options' : 'Show Advanced Options'}
+            </button>
+            
+            {showAdvanced && (
+              <div style={{ 
+                marginTop: '10px',
+                padding: '15px',
+                backgroundColor: '#f5f5f5',
+                borderRadius: '4px'
+              }}>
+                <h3 style={{ fontSize: '16px', margin: '0 0 10px 0' }}>Advanced Controls</h3>
+                <button 
+                  onClick={triggerOrganize}
+                  style={{ 
+                    padding: '8px 15px',
+                    backgroundColor: '#9e9e9e',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Process Local Files
+                </button>
+                <p style={{ fontSize: '13px', color: '#666', marginTop: '8px' }}>
+                  Only use this if you've manually placed files in the local inbox.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Query section */}
         <div style={{ flex: '1', minWidth: '300px' }}>
           <h2>Query Knowledge Base</h2>
           <input
@@ -228,7 +272,7 @@ export default function Home() {
             placeholder="Ask your KB..."
             style={{ 
               width: '100%', 
-              padding: '10px', 
+              padding: '12px', 
               marginBottom: '10px',
               borderRadius: '4px',
               border: '1px solid #ddd'
@@ -237,12 +281,13 @@ export default function Home() {
           <button 
             onClick={handleQuery} 
             style={{ 
-              padding: '10px 20px',
+              padding: '12px 20px',
               backgroundColor: '#673AB7',
               color: 'white',
               border: 'none',
               borderRadius: '4px',
-              cursor: 'pointer'
+              cursor: 'pointer',
+              fontWeight: 'bold'
             }}
           >
             Search
@@ -257,30 +302,6 @@ export default function Home() {
           }}>
             {results}
           </div>
-        </div>
-
-        <div style={{ flex: '1', minWidth: '300px' }}>
-          <h2>Upload File to Inbox</h2>
-          <input
-            type="file"
-            onChange={handleFileChange}
-            style={{ margin: '10px 0', width: '100%' }}
-          />
-          <button 
-            onClick={handleUpload} 
-            style={{ 
-              padding: '10px 20px',
-              backgroundColor: '#FF5722',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              width: '100%'
-            }}
-          >
-            Upload
-          </button>
-          <div style={{ marginTop: '10px' }}>{uploadMessage}</div>
         </div>
       </div>
     </div>
