@@ -32,13 +32,18 @@ def extract_text_from_pdf(path):
 
 def extract_text_from_image(path):
     try:
-        image = Image.open(path)
-        return pytesseract.image_to_string(image)
+        image = Image.open(path).convert("L")  # Grayscale
+        image = image.point(lambda x: 0 if x < 140 else 255)  # Threshold
+        text = pytesseract.image_to_string(image, lang="eng")
+        print("🖼️ OCR Result Preview:\n", text[:300])
+        return text
     except Exception as e:
         return f"[OCR failed: {e}]"
 
 def extract_urls(text):
-    return re.findall(r"https?://\S+", text)
+    urls = re.findall(r"https?://\S+", text)
+    print("🔗 Detected URLs:", urls)
+    return urls
 
 def enrich_urls(urls):
     enriched = []
@@ -116,9 +121,12 @@ def organize_files():
                         text_content = raw_bytes.decode("latin-1")
                         extraction_method = "decode"
 
+                log_f.write(f"📝 Raw Text Preview:\n{text_content[:500]}\n")
+
                 urls = extract_urls(text_content)
                 if urls:
-                    text_content += "\n\n---\n\n## Referenced Links\n" + enrich_urls(urls)
+                    enriched = enrich_urls(urls)
+                    text_content += "\n\n---\n\n## Referenced Links\n" + enriched
 
                 base_name = Path(filename).stem
                 today = time.strftime("%Y-%m-%d")
