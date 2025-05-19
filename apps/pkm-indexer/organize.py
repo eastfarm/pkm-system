@@ -32,41 +32,180 @@ def extract_text_from_pdf(path):
 
 def extract_text_from_image(path):
     try:
-        image = Image.open(path).convert("L")  # Grayscale
-        image = image.point(lambda x: 0 if x < 140 else 255)  # Threshold
-        text = pytesseract.image_to_string(image, lang="eng")
+        # Open and process image
+        image = Image.open(path)
+        
+        # Try multiple preprocessing approaches
+        texts = []
+        
+        # Approach 1: Original with adjusted threshold
+        img1 = image.convert("L")
+        img1 = img1.point(lambda x: 0 if x < 120 else 255)  # Lowered threshold
+        texts.append(pytesseract.image_to_string(img1, lang="eng"))
+        
+        # Approach 2: Try Danish language if available
+        try:
+            texts.append(pytesseract.image_to_string(img1, lang="dan"))
+        except:
+            # If Danish not installed, try with English
+            pass
+        
+        # Approach 3: Try with different preprocessing
+        img3 = image.convert("L")
+        img3 = img3.resize((int(img3.width * 1.5), int(img3.height * 1.5)), Image.LANCZOS)  # Upsample
+        img3 = img3.point(lambda x: 0 if x < 150 else 255)  # Different threshold
+        
+        # Try multilingual if available
+        try:
+            texts.append(pytesseract.image_to_string(img3, lang="dan+eng"))
+        except:
+            texts.append(pytesseract.image_to_string(img3, lang="eng"))
+        
+        # Approach 4: Higher contrast for slide presentations
+        img4 = image.convert("L")
+        # Apply more aggressive contrast for presentation slides
+        img4 = img4.point(lambda x: 0 if x < 180 else 255)
+        texts.append(pytesseract.image_to_string(img4, lang="eng"))
+        
+        # Use the longest text result that isn't just garbage
+        valid_texts = [t for t in texts if len(t.strip()) > 20]
+        if valid_texts:
+            text = max(valid_texts, key=len)
+        else:
+            text = max(texts, key=len)
+        
+        # If we got nothing meaningful, report failure
+        if len(text.strip()) < 20:
+            return "[OCR produced insufficient text. Manual processing recommended.]"
+            
         print("🖼️ OCR output:", repr(text[:500]))
         return text
     except Exception as e:
         return f"[OCR failed: {e}]"
 
 def extract_urls(text):
-    urls = re.findall(r"https?://\S+", text)
-    print("🔗 URLs detected:", urls)
-    return urls
+    # More comprehensive regex that handles URLs in various formats
+    url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[-\w%!.~\'()*+,;=:@/&?=]*)?'
+    urls = re.findall(url_pattern, text)
+    
+    # Also look for linked text with URLs like [text](url)
+    markdown_links = re.findall(r'\[([^\]]+)\]\(([^)]+)\)', text)
+    markdown_urls = [link[1] for link in markdown_links if link[1].startswith('http')]
+    
+    # Look for labeled links like "GenAI for Everyone by Andrew Ng" where GenAI for Everyone might be a link
+    potential_link_titles = re.findall(r'["\']([^"\']+)["\']', text)
+    
+    all_urls = list(set(urls + markdown_urls))  # Remove duplicates
+    print("🔗 URLs detected:", all_urls)
+    print("🔍 Potential link titles:", potential_link_titles[:10])
+    return all_urls, potential_link_titles
 
-def enrich_urls(urls):
+def enrich_urls(urls, potential_titles=None):
     enriched = []
+    metadata = {}
+    
+    # Create a mapping of potential titles to improve URL descriptions
+    title_map = {}
+    if potential_titles:
+        for title in potential_titles:
+            # Store lowercase version for case-insensitive matching
+            title_map[title.lower()] = title
+    
     for url in urls:
         try:
-            r = requests.get(url, timeout=5)
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            r = requests.get(url, timeout=10, headers=headers)
             soup = BeautifulSoup(r.text, "html.parser")
-            title = soup.title.string.strip() if soup.title else "(No title)"
-            enriched.append(f"- [{title}]({url})")
-        except Exception:
-            enriched.append(f"- {url} (unreachable)")
+            
+            # Try to get title
+            title = "(No title)"
+            if soup.title and soup.title.string:
+                title = soup.title.string.strip()
+            
+            # Try to get description
+            description = ""
+            meta_desc = soup.find('meta', attrs={'name': 'description'}) or soup.find('meta', attrs={'property': 'og:description'})
+            if meta_desc and 'content' in meta_desc.attrs:
+                description = meta_desc['content'].strip()
+                if len(description) > 150:
+                    description = description[:150] + "..."
+            
+            # Check if this URL might match a potential title we found
+            url_lower = url.lower()
+            matching_title = None
+            for potential_title_lower, original_title in title_map.items():
+                # See if any words from the potential title appear in the URL
+                words = potential_title_lower.split()
+                if any(word in url_lower for word in words if len(word) > 3):
+                    matching_title = original_title
+                    break
+            
+            # Use matching title if found
+            if matching_title and len(matching_title) > 5:
+                display_title = matching_title
+            else:
+                display_title = title
+                
+            enriched_entry = f"- [{display_title}]({url})"
+            if description:
+                enriched_entry += f"\n  *{description}*"
+                
+            enriched.append(enriched_entry)
+            
+            # Store metadata for later use
+            metadata[url] = {
+                "title": display_title,
+                "description": description[:150] if description else "",
+                "url": url
+            }
+            
+        except Exception as e:
+            enriched.append(f"- {url} (unreachable: {str(e)[:50]})")
+            metadata[url] = {
+                "title": url,
+                "description": f"Error: {str(e)[:50]}",
+                "url": url
+            }
+    
     print("🔍 Enriched URLs block:\n", "\n".join(enriched))
-    return "\n".join(enriched)
+    return "\n".join(enriched), metadata
 
-def get_extract(content, log_f=None):
+def get_extract(content, file_type=None, urls_metadata=None, log_f=None):
     try:
         print("🧠 Content sent to GPT (preview):\n", content[:500])
-        prompt = (
-            "You are a semantic summarizer. Return a short title and a deeper thematic summary, plus relevant tags.\n\n"
-            "Respond in this JSON format:\n"
-            "{\n  \"extract_title\": \"...\",\n  \"extract_content\": \"...\",\n  \"tags\": [\"tag1\", \"tag2\"]\n}\n\n"
-            f"Content:\n{content[:3000]}"
-        )
+        
+        # Different prompt based on content type
+        if file_type == "image":
+            prompt = (
+                "You are analyzing text extracted from an image via OCR. The text may have errors or be incomplete.\n\n"
+                "Create a meaningful title and summary of what this image contains, plus relevant tags.\n\n"
+                "Respond in this JSON format:\n"
+                "{\n  \"extract_title\": \"...\",\n  \"extract_content\": \"...\",\n  \"tags\": [\"tag1\", \"tag2\"]\n}\n\n"
+                f"OCR Text:\n{content[:3000]}"
+            )
+        elif urls_metadata and len(urls_metadata) > 0:
+            # Create a summary of URLs for the prompt
+            url_summary = "\n".join([f"- {data['title']}: {data['url']}" for url, data in urls_metadata.items()])
+            
+            prompt = (
+                "You are summarizing content that contains valuable URLs and references.\n\n"
+                "Create a title and detailed summary preserving key information, plus relevant tags.\n"
+                "Pay special attention to these detected URLs and resources:\n\n"
+                f"{url_summary}\n\n"
+                "Respond in this JSON format:\n"
+                "{\n  \"extract_title\": \"...\",\n  \"extract_content\": \"...\",\n  \"tags\": [\"tag1\", \"tag2\"]\n}\n\n"
+                f"Content:\n{content[:3000]}"
+            )
+        else:
+            prompt = (
+                "You are a semantic summarizer. Return a short title and a deeper thematic summary, plus relevant tags.\n\n"
+                "Respond in this JSON format:\n"
+                "{\n  \"extract_title\": \"...\",\n  \"extract_content\": \"...\",\n  \"tags\": [\"tag1\", \"tag2\"]\n}\n\n"
+                f"Content:\n{content[:3000]}"
+            )
+            
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
@@ -81,6 +220,7 @@ def get_extract(content, log_f=None):
     except Exception as e:
         if log_f:
             log_f.write(f"OpenAI ERROR: {e}\n")
+        print(f"🚫 Error in get_extract: {e}")
         return "Untitled", "Extract not available", ["uncategorized"]
 
 def organize_files():
@@ -125,16 +265,29 @@ def organize_files():
 
                 log_f.write(f"📝 Raw Text Preview:\n{text_content[:500]}\n")
 
-                urls = extract_urls(text_content)
+                # Enhanced URL processing
+                urls, potential_titles = extract_urls(text_content)
+                urls_metadata = {}
+                
                 if urls:
-                    enriched = enrich_urls(urls)
+                    enriched, urls_metadata = enrich_urls(urls, potential_titles)
                     text_content += "\n\n---\n\n## Referenced Links\n" + enriched
 
                 base_name = Path(filename).stem
                 today = time.strftime("%Y-%m-%d")
                 md_filename = f"{today}_{base_name}.md"
 
-                title, extract, tags = get_extract(text_content, log_f)
+                title, extract, tags = get_extract(text_content, file_type, urls_metadata, log_f)
+
+                # Default category based on file type
+                category = "Reference" if file_type == "pdf" else "Image" if file_type == "image" else "Note"
+                
+                # Try to improve tags when we have little information
+                if tags == ["uncategorized"] or tags == ["untagged"]:
+                    if file_type == "pdf" and "AI" in text_content:
+                        tags = ["AI", "Document", "Reference"]
+                    elif file_type == "image" and extraction_method == "ocr":
+                        tags = ["Image", "Slide", "Presentation"]
 
                 metadata = {
                     "title": title,
@@ -143,6 +296,7 @@ def organize_files():
                     "source": filename,
                     "source_url": None,
                     "tags": tags,
+                    "category": category,
                     "author": "Unknown",
                     "extract_title": title,
                     "extract_content": extract,
@@ -150,6 +304,10 @@ def organize_files():
                     "parse_status": "success",
                     "extraction_method": extraction_method
                 }
+                
+                # Include URL information if relevant
+                if urls_metadata:
+                    metadata["referenced_urls"] = [url for url in urls]
 
                 post = frontmatter.Post(
                     content=text_content if file_type == "text" and len(text_content) < 3000 else "[Content omitted]",
