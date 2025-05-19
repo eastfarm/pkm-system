@@ -1,5 +1,5 @@
 # File: apps/pkm-indexer/main.py
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, BackgroundTasks
 from fastapi.responses import RedirectResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import os
@@ -7,14 +7,27 @@ import io
 import json
 import base64
 import asyncio
+import uuid
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 from organize import organize_files
 from index import indexKB, searchKB
+import logging
+from datetime import datetime, timedelta
 
 app = FastAPI()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger("pkm-indexer")
 
 # Add CORS middleware
 app.add_middleware(
@@ -27,6 +40,8 @@ app.add_middleware(
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI", "http://localhost:8000/oauth/callback")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "https://pkm-indexer-production.up.railway.app/drive-webhook")
+CHANNEL_ID = str(uuid.uuid4())  # Unique channel ID for Google Drive notifications
 
 CLIENT_CONFIG = {
     "web": {
@@ -36,6 +51,15 @@ CLIENT_CONFIG = {
         "auth_uri": "https://accounts.google.com/o/oauth2/auth",
         "token_uri": "https://oauth2.googleapis.com/token",
     }
+}
+
+# Store webhook data
+webhook_state = {
+    "channel_id": CHANNEL_ID,
+    "resource_id": None,
+    "expiration": None,
+    "inbox_id": None,
+    "last_renewal": None
 }
 
 # ─── AUTH FLOW ─────────────────────────────────────────────────────
@@ -78,6 +102,205 @@ def find_or_create_folder(service, parent_id, name):
     folder = service.files().create(body=folder_metadata, fields="id").execute()
     return folder['id']
 
+# ─── WEBHOOK MANAGEMENT ─────────────────────────────────────────────
+
+@app.post("/drive-webhook")
+async def handle_drive_webhook(request: Request, background_tasks: BackgroundTasks):
+    """
+    Handle Google Drive webhook notifications when files change
+    """
+    # Verify request is from Google Drive
+    channel_id = request.headers.get("X-Goog-Channel-ID")
+    resource_state = request.headers.get("X-Goog-Resource-State")
+    
+    # Log the notification
+    logger.info(f"Received webhook notification: {resource_state} for channel {channel_id}")
+    
+    # Check resource state - we're interested in 'change' events
+    if resource_state in ["sync", "change"]:
+        # Process the notification in the background
+        background_tasks.add_task(process_drive_changes)
+        
+    # Always respond with 204 No Content quickly to acknowledge receipt
+    return Response(status_code=204)
+
+async def process_drive_changes():
+    """
+    Process changes in Google Drive inbox folder
+    """
+    logger.info("Processing Drive changes...")
+    try:
+        # Call the sync_drive function to process files
+        result = sync_drive()
+        if isinstance(result, dict) and result.get("uploaded"):
+            logger.info(f"Webhook sync completed: {len(result.get('uploaded', []))} files processed")
+        else:
+            logger.info(f"Webhook sync completed: {result}")
+    except Exception as e:
+        logger.error(f"Error processing Drive changes: {str(e)}")
+
+def setup_webhook_registration():
+    """
+    Set up or renew Google Drive webhook for the PKM/Inbox folder
+    """
+    try:
+        token_json = os.environ.get("GOOGLE_TOKEN_JSON")
+        if not token_json:
+            logger.error("Google Drive credentials missing - can't set up webhook")
+            return False
+            
+        creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
+        drive_service = build('drive', 'v3', credentials=creds)
+        
+        # First, find or create the PKM/Inbox folder
+        pkm_id = find_pkm_folder(drive_service)
+        inbox_id = find_inbox_folder(drive_service, pkm_id)
+        
+        if not inbox_id:
+            logger.error("Could not find or create PKM/Inbox folder")
+            return False
+        
+        # Store the inbox_id for later use
+        webhook_state["inbox_id"] = inbox_id
+        
+        # If there's an existing webhook, stop it first
+        if webhook_state["resource_id"]:
+            try:
+                drive_service.channels().stop(
+                    body={
+                        "id": webhook_state["channel_id"],
+                        "resourceId": webhook_state["resource_id"]
+                    }
+                ).execute()
+                logger.info(f"Stopped existing webhook with channel ID: {webhook_state['channel_id']}")
+            except Exception as e:
+                logger.warning(f"Error stopping existing webhook: {str(e)}")
+        
+        # Generate a new channel ID for each registration
+        webhook_state["channel_id"] = str(uuid.uuid4())
+        
+        # Register for changes on the inbox folder
+        webhook_expiration = datetime.now() + timedelta(days=7)  # Max 7 days for webhook
+        expiration_ms = int(webhook_expiration.timestamp() * 1000)
+        
+        # Set up the webhook using Drive API
+        webhook_body = {
+            "id": webhook_state["channel_id"],
+            "type": "web_hook",
+            "address": WEBHOOK_URL,
+            "expiration": expiration_ms,
+        }
+        
+        # Create the webhook
+        response = drive_service.files().watch(
+            fileId=inbox_id,
+            body=webhook_body
+        ).execute()
+        
+        # Store the webhook information
+        webhook_state["resource_id"] = response.get("resourceId")
+        webhook_state["expiration"] = response.get("expiration")
+        webhook_state["last_renewal"] = datetime.now().isoformat()
+        
+        logger.info(f"Webhook set up successfully. Channel ID: {webhook_state['channel_id']}, Expires: {webhook_expiration}")
+        
+        return True
+    except Exception as e:
+        logger.error(f"Webhook setup error: {str(e)}")
+        return False
+
+def check_webhook_expiration():
+    """Check if webhook needs renewal and renew if needed"""
+    try:
+        # If webhook isn't set up or doesn't have expiration, set it up
+        if not webhook_state["expiration"]:
+            return setup_webhook_registration()
+            
+        # Check if expiration is approaching (less than 1 day remaining)
+        expiration_time = datetime.fromtimestamp(int(webhook_state["expiration"]) / 1000)
+        now = datetime.now()
+        
+        # If webhook expires in less than 24 hours, renew it
+        if expiration_time - now < timedelta(hours=24):
+            logger.info("Webhook expiration approaching, renewing...")
+            return setup_webhook_registration()
+            
+        # Webhook is still valid
+        return True
+    except Exception as e:
+        logger.error(f"Error checking webhook expiration: {str(e)}")
+        return False
+
+@app.get("/webhook/status")
+def webhook_status():
+    """
+    Get the status of the Google Drive webhook - for monitoring only
+    """
+    try:
+        now = datetime.now()
+        is_expired = False
+        
+        if webhook_state["expiration"]:
+            expiration_time = datetime.fromtimestamp(int(webhook_state["expiration"]) / 1000)
+            is_expired = now > expiration_time
+        
+        is_active = webhook_state["resource_id"] is not None and not is_expired
+        
+        status_info = {
+            "is_active": is_active,
+            "channel_id": webhook_state["channel_id"],
+            "inbox_id": webhook_state["inbox_id"],
+            "expiration": None,
+            "last_renewal": webhook_state["last_renewal"]
+        }
+        
+        if webhook_state["expiration"]:
+            expiration_time = datetime.fromtimestamp(int(webhook_state["expiration"]) / 1000)
+            status_info["expiration"] = expiration_time.isoformat()
+            status_info["time_remaining"] = str(expiration_time - now) if expiration_time > now else "Expired"
+        
+        return status_info
+    except Exception as e:
+        logger.error(f"Webhook status error: {str(e)}")
+        return JSONResponse(
+            status_code=500, 
+            content={"status": f"Failed to get webhook status: {str(e)}", "error": str(e)}
+        )
+
+# ─── FOLDER HELPERS ───────────────────────────────────────────────
+
+def find_pkm_folder(service):
+    """Find or create the PKM folder"""
+    query_pkm = "name='PKM' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    pkm_results = service.files().list(q=query_pkm, fields="files(id,name)").execute()
+    pkm_folders = pkm_results.get('files', [])
+    
+    if not pkm_folders:
+        # PKM folder doesn't exist, create it
+        pkm_id = find_or_create_folder(service, "root", "PKM")
+        logger.info(f"Created PKM folder: {pkm_id}")
+    else:
+        pkm_id = pkm_folders[0]['id']
+        logger.info(f"Found PKM folder: {pkm_id}")
+    
+    return pkm_id
+
+def find_inbox_folder(service, pkm_id):
+    """Find or create the Inbox folder under PKM"""
+    query_inbox = f"'{pkm_id}' in parents and name='Inbox' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    inbox_results = service.files().list(q=query_inbox, fields="files(id,name)").execute()
+    inbox_folders = inbox_results.get('files', [])
+    
+    if not inbox_folders:
+        # Inbox folder doesn't exist, create it
+        inbox_id = find_or_create_folder(service, pkm_id, "Inbox")
+        logger.info(f"Created Inbox folder: {inbox_id}")
+    else:
+        inbox_id = inbox_folders[0]['id']
+        logger.info(f"Found Inbox folder: {inbox_id}")
+    
+    return inbox_id
+
 # ─── SYNC DRIVE ───────────────────────────────────────────────────
 
 @app.post("/sync-drive")
@@ -110,31 +333,17 @@ def sync_drive():
 
         # 1. Locate PKM + subfolders
         try:
-            # First, try to find the PKM folder
-            query_pkm = "name='PKM' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-            pkm_results = service.files().list(q=query_pkm, fields="files(id,name)").execute()
-            pkm_folders = pkm_results.get('files', [])
+            # Find or create the PKM folder
+            pkm_id = find_pkm_folder(service)
+            debug_info["drive_folders"].append(f"PKM folder: {pkm_id}")
             
-            if not pkm_folders:
-                # PKM folder doesn't exist, create it
-                pkm_id = find_or_create_folder(service, "root", "PKM")
-                debug_info["drive_folders"].append(f"Created PKM folder: {pkm_id}")
-            else:
-                pkm_id = pkm_folders[0]['id']
-                debug_info["drive_folders"].append(f"Found PKM folder: {pkm_id}")
+            # Find or create the Inbox folder
+            inbox_id = find_inbox_folder(service, pkm_id)
+            debug_info["drive_folders"].append(f"Inbox folder: {inbox_id}")
             
-            # Now find or create the Inbox folder
-            query_inbox = f"'{pkm_id}' in parents and name='Inbox' and mimeType='application/vnd.google-apps.folder' and trashed=false"
-            inbox_results = service.files().list(q=query_inbox, fields="files(id,name)").execute()
-            inbox_folders = inbox_results.get('files', [])
-            
-            if not inbox_folders:
-                # Inbox folder doesn't exist, create it
-                inbox_id = find_or_create_folder(service, pkm_id, "Inbox")
-                debug_info["drive_folders"].append(f"Created Inbox folder: {inbox_id}")
-            else:
-                inbox_id = inbox_folders[0]['id']
-                debug_info["drive_folders"].append(f"Found Inbox folder: {inbox_id}")
+            # Update webhook state with inbox ID if needed
+            if inbox_id and not webhook_state["inbox_id"]:
+                webhook_state["inbox_id"] = inbox_id
             
             # Continue with other folders
             processed_id = find_or_create_folder(service, pkm_id, "Processed")
@@ -513,5 +722,36 @@ def root():
         "/search - Search the knowledge base",
         "/upload/{folder} - Upload a file to a folder",
         "/logs - View processing logs",
-        "/file-stats - Get file statistics"
+        "/file-stats - Get file statistics",
+        "/webhook/status - Check automatic sync status"
     ]}
+
+# ─── BACKGROUND TASK TO CHECK WEBHOOK EXPIRATION ─────────────────
+
+async def renew_webhook_if_needed():
+    """Periodic task to check and renew webhook if needed"""
+    while True:
+        try:
+            check_webhook_expiration()
+            # Check every 12 hours
+            await asyncio.sleep(12 * 60 * 60)
+        except Exception as e:
+            logger.error(f"Error in webhook renewal background task: {str(e)}")
+            # Still sleep before retrying
+            await asyncio.sleep(60 * 60)  # 1 hour on error
+
+# ─── STARTUP EVENT ───────────────────────────────────────────────
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize the system on startup"""
+    try:
+        # Set up the webhook immediately on startup
+        setup_webhook_registration()
+        logger.info("Startup: Webhook setup initiated")
+        
+        # Start background task to periodically check and renew webhook
+        asyncio.create_task(renew_webhook_if_needed())
+        logger.info("Started webhook renewal background task")
+    except Exception as e:
+        logger.error(f"Error during application startup: {str(e)}")

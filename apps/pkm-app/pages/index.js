@@ -10,14 +10,17 @@ export default function Home() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [fileStats, setFileStats] = useState(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [webhookStatus, setWebhookStatus] = useState(null);
 
-  // Fetch file stats when the component loads
+  // Fetch file stats and webhook status when the component loads
   useEffect(() => {
     fetchFileStats();
+    fetchWebhookStatus();
     
     // Set up auto-refresh every 2 minutes
     const interval = setInterval(() => {
       fetchFileStats();
+      fetchWebhookStatus();
     }, 120000);
     
     return () => clearInterval(interval);
@@ -29,6 +32,16 @@ export default function Home() {
       setFileStats(response.data);
     } catch (error) {
       console.error('Failed to fetch file stats:', error);
+    }
+  };
+
+  const fetchWebhookStatus = async () => {
+    try {
+      const response = await axios.get('https://pkm-indexer-production.up.railway.app/webhook/status');
+      setWebhookStatus(response.data);
+    } catch (error) {
+      console.error('Failed to fetch webhook status:', error);
+      setWebhookStatus(null);
     }
   };
 
@@ -103,7 +116,32 @@ export default function Home() {
         borderRadius: '8px',
         border: '1px solid #e9ecef'
       }}>
-        <h2 style={{ marginTop: '0', marginBottom: '15px', textAlign: 'center' }}>Google Drive Sync</h2>
+        <h2 style={{ marginTop: '0', marginBottom: '15px', textAlign: 'center' }}>Google Drive Integration</h2>
+        
+        {/* Auto-sync Status Badge */}
+        <div style={{ 
+          marginBottom: '15px', 
+          padding: '8px 15px', 
+          backgroundColor: webhookStatus?.is_active ? '#e8f5e9' : '#fff3e0', 
+          borderRadius: '4px',
+          border: `1px solid ${webhookStatus?.is_active ? '#a5d6a7' : '#ffe0b2'}`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: '100%',
+          maxWidth: '500px',
+          fontSize: '15px'
+        }}>
+          {webhookStatus?.is_active ? (
+            <span>
+              ✅ Automatic synchronization is active. Files added to Google Drive will be processed immediately.
+            </span>
+          ) : (
+            <span>
+              ⚠️ Setting up automatic synchronization... This will be active shortly.
+            </span>
+          )}
+        </div>
         
         <button 
           onClick={triggerDriveSync} 
@@ -122,10 +160,11 @@ export default function Home() {
             maxWidth: '300px'
           }}
         >
-          {isSyncing ? 'Syncing...' : 'Sync Google Drive'}
+          {isSyncing ? 'Syncing...' : 'Sync Now'}
         </button>
         
-        {syncStatus && 
+        {/* Sync status message */}
+        {syncStatus && (
           <div style={{ 
             marginTop: '15px', 
             padding: '10px', 
@@ -138,10 +177,11 @@ export default function Home() {
           }}>
             {syncStatus}
           </div>
-        }
+        )}
         
         <div style={{ fontSize: '13px', color: '#666', marginTop: '20px', textAlign: 'center' }}>
-          Place files in your Google Drive's <strong>PKM/Inbox</strong> folder and click Sync.
+          <p>Place files in your Google Drive's <strong>PKM/Inbox</strong> folder to process them automatically.</p>
+          <p>The "Sync Now" button manually checks for new files if you don't want to wait for auto-sync.</p>
         </div>
       </div>
 
