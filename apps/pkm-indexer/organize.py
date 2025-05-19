@@ -26,9 +26,93 @@ def infer_file_type(filename):
 def extract_text_from_pdf(path):
     try:
         with pdfplumber.open(path) as pdf:
-            return "\n".join(page.extract_text() or "" for page in pdf.pages)
+            text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+            
+            # Check if this looks like a LinkedIn post
+            if "Profile viewers" in text[:500] or "Post impressions" in text[:500] or "linkedin.com" in text.lower():
+                return process_linkedin_pdf(text, path)
+            
+            return text
     except Exception as e:
         return f"[PDF extraction failed: {e}]"
+
+def process_linkedin_pdf(text, path):
+    """Process LinkedIn PDF content to extract the main post and ignore comments."""
+    try:
+        # Pattern to detect the start of comments section
+        comment_indicators = [
+            "Reactions", 
+            "Like · Reply",
+            "comments · ",
+            "reposts",
+            "Most relevant"
+        ]
+        
+        # Pattern to detect URLs in the text
+        url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[-\w%!.~\'()*+,;=:@/&?=]*)?'
+        
+        # Find all URLs in the original content
+        main_urls = re.findall(url_pattern, text)
+        important_urls = []
+        
+        # Split content by lines to process
+        lines = text.split('\n')
+        main_content_lines = []
+        
+        # Track if we're in the comments section
+        in_comments = False
+        author_comment_section = False
+        post_author = None
+        
+        # Extract the post author if available (usually near the beginning)
+        for i, line in enumerate(lines[:15]):
+            if "• Author" in line or "• 1st" in line or "• 2nd" in line or "• 3rd" in line:
+                # The line before often contains the author name
+                if i > 0:
+                    post_author = lines[i-1].strip()
+                    break
+                    
+        # Process the content line by line
+        for i, line in enumerate(lines):
+            # Check if we've hit the comments section
+            if any(indicator in line for indicator in comment_indicators) and i > 10:
+                in_comments = True
+                continue
+                
+            # If we're still in the main content, keep the line
+            if not in_comments:
+                main_content_lines.append(line)
+                continue
+                
+            # Check for author comments (only process if we know the author)
+            if post_author and post_author in line and i+2 < len(lines) and "Author" in lines[i:i+2]:
+                author_comment_section = True
+                continue
+                
+            # Process author comment content
+            if author_comment_section:
+                # Look for URLs or other important info in first author comment
+                urls_in_comment = re.findall(url_pattern, line)
+                if urls_in_comment:
+                    important_urls.extend(urls_in_comment)
+                    
+                # Check if author comment section is ending
+                if "Like · Reply" in line or "Like · " in line:
+                    author_comment_section = False
+        
+        # Combine the main content
+        main_content = '\n'.join(main_content_lines)
+        
+        # Add any important URLs from author comments if they weren't in the main content
+        for url in important_urls:
+            if url not in main_urls and ("lnkd.in" in url or ".com" in url):  # LinkedIn short URLs are often important
+                main_content += f"\n\nAdditional URL from author comment: {url}"
+                
+        print("📱 Detected LinkedIn post, removed comments section")
+        return main_content
+    except Exception as e:
+        print(f"Error processing LinkedIn content: {e}")
+        return text  # Return original if processing fails
 
 def extract_text_from_image(path):
     try:
@@ -84,7 +168,11 @@ def extract_text_from_image(path):
         return f"[OCR failed: {e}]"
 
 def extract_urls(text):
-    # More comprehensive regex that handles URLs in various formats
+    """
+    Extract URLs from text, including both standard http/https URLs and potential 
+    title-based references that might be links.
+    """
+    # Standard URL pattern
     url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+(?:/[-\w%!.~\'()*+,;=:@/&?=]*)?'
     urls = re.findall(url_pattern, text)
     
@@ -92,13 +180,39 @@ def extract_urls(text):
     markdown_links = re.findall(r'\[([^\]]+)\]\(([^)]+)\)', text)
     markdown_urls = [link[1] for link in markdown_links if link[1].startswith('http')]
     
-    # Look for labeled links like "GenAI for Everyone by Andrew Ng" where GenAI for Everyone might be a link
-    potential_link_titles = re.findall(r'["\']([^"\']+)["\']', text)
+    # Look for potential title links in specific formats
+    potential_links = []
+    
+    # Look for titles that might be links (for PDF resources lists)
+    # Pattern: title followed by "by Author" - common in resource lists
+    title_pattern = r'(?:^|\n)(?:\d+\)|\-)\s*([^""\n]+?)(?= by | \()'
+    potential_titles = re.findall(title_pattern, text)
+    
+    # Also look for text that appears to be a clickable reference
+    # Common in PDFs with links that don't have explicit URLs
+    reference_patterns = [
+        r'([A-Z][a-z]+(?:\s[A-Z][a-z]+)*\s(?:AI|ML|for\sEveryone|Intelligence|Awareness|Machine|clone))',  # AI-related titles
+        r'(my book|my AI clone|Appendix [A-Z]|Foundry from HBS)',  # References to books, appendices, etc.
+        r'(?<=see\s)([^\.,:;\n]+)'  # Things after "see" are often references
+    ]
+    
+    for pattern in reference_patterns:
+        found = re.findall(pattern, text)
+        potential_links.extend([link.strip() for link in found if len(link.strip()) > 5])
+    
+    # Add potential titles that look like resources
+    potential_links.extend([title.strip() for title in potential_titles if len(title.strip()) > 5])
+    
+    # Remove duplicates and very common words that aren't likely to be meaningful links
+    potential_links = list(set(potential_links))
+    filtered_links = [link for link in potential_links if link.lower() not in 
+                     ['and', 'the', 'this', 'that', 'with', 'from', 'after', 'before']]
     
     all_urls = list(set(urls + markdown_urls))  # Remove duplicates
     print("🔗 URLs detected:", all_urls)
-    print("🔍 Potential link titles:", potential_link_titles[:10])
-    return all_urls, potential_link_titles
+    print("🔍 Potential link titles:", filtered_links[:15])
+    
+    return all_urls, filtered_links
 
 def enrich_urls(urls, potential_titles=None):
     enriched = []
@@ -172,18 +286,64 @@ def enrich_urls(urls, potential_titles=None):
     print("🔍 Enriched URLs block:\n", "\n".join(enriched))
     return "\n".join(enriched), metadata
 
-def get_extract(content, file_type=None, urls_metadata=None, log_f=None):
+def get_extract(content, file_type=None, urls_metadata=None, log_f=None, is_linkedin=False):
     try:
         print("🧠 Content sent to GPT (preview):\n", content[:500])
         
+        # Determine appropriate extract length based on content
+        content_length = len(content)
+        if content_length < 1000:
+            # For very short content, keep extract concise
+            extract_length = 200
+            model = "gpt-4"
+        elif content_length < 5000:
+            # For medium content, medium extract
+            extract_length = 500
+            model = "gpt-4"
+        else:
+            # For longer, complex content, allow longer extracts
+            extract_length = 2000  # Up to ~400 words for complex content
+            model = "gpt-4"  # Better for complex content
+        
+        # Check if this appears to be a resource list/links-heavy doc
+        has_resource_patterns = (
+            "resources" in content.lower() and 
+            (content.count("\n1)") > 1 or content.count("\n2)") > 1)
+        )
+        
         # Different prompt based on content type
-        if file_type == "image":
+        if has_resource_patterns:
+            # For resource-list style documents
+            prompt = (
+                "You are analyzing a document that appears to be a resource list with references, links, and learning materials.\n\n"
+                "Create a detailed summary that specifically includes ALL referenced resources, people, and links. "
+                "Also provide relevant tags that capture the subject matter and type of resources.\n\n"
+                "In your extract, make sure to preserve:\n"
+                "1. All resource names and titles\n"
+                "2. All author names and affiliations\n"
+                "3. All categories of resources\n"
+                "4. Any referenced websites, tools, or platforms\n\n"
+                "Respond in this JSON format:\n"
+                "{\n  \"extract_title\": \"...\",\n  \"extract_content\": \"...\",\n  \"tags\": [\"tag1\", \"tag2\"]\n}\n\n"
+                f"Content:\n{content[:5000]}"
+            )
+        elif is_linkedin:
+            prompt = (
+                "You are analyzing a LinkedIn post. Create a clear title and detailed summary that captures "
+                "the key points, insights, and any URLs/resources mentioned in the post. Ignore promotional content.\n\n"
+                "Focus on what makes this post valuable for knowledge management purposes.\n\n"
+                "Respond in this JSON format:\n"
+                "{\n  \"extract_title\": \"...\",\n  \"extract_content\": \"...\",\n  \"tags\": [\"tag1\", \"tag2\"]\n}\n\n"
+                f"LinkedIn Post Content:\n{content[:5000]}"
+            )
+        elif file_type == "image":
             prompt = (
                 "You are analyzing text extracted from an image via OCR. The text may have errors or be incomplete.\n\n"
                 "Create a meaningful title and summary of what this image contains, plus relevant tags.\n\n"
+                "For complex content, provide a detailed summary that captures the key information.\n\n"
                 "Respond in this JSON format:\n"
                 "{\n  \"extract_title\": \"...\",\n  \"extract_content\": \"...\",\n  \"tags\": [\"tag1\", \"tag2\"]\n}\n\n"
-                f"OCR Text:\n{content[:3000]}"
+                f"OCR Text:\n{content[:5000]}"
             )
         elif urls_metadata and len(urls_metadata) > 0:
             # Create a summary of URLs for the prompt
@@ -192,27 +352,29 @@ def get_extract(content, file_type=None, urls_metadata=None, log_f=None):
             prompt = (
                 "You are summarizing content that contains valuable URLs and references.\n\n"
                 "Create a title and detailed summary preserving key information, plus relevant tags.\n"
+                "For rich content with many references, provide a comprehensive summary.\n\n"
                 "Pay special attention to these detected URLs and resources:\n\n"
                 f"{url_summary}\n\n"
                 "Respond in this JSON format:\n"
                 "{\n  \"extract_title\": \"...\",\n  \"extract_content\": \"...\",\n  \"tags\": [\"tag1\", \"tag2\"]\n}\n\n"
-                f"Content:\n{content[:3000]}"
+                f"Content:\n{content[:5000]}"
             )
         else:
             prompt = (
                 "You are a semantic summarizer. Return a short title and a deeper thematic summary, plus relevant tags.\n\n"
+                "For complex or information-rich content, provide a detailed summary that captures the key points.\n\n"
                 "Respond in this JSON format:\n"
                 "{\n  \"extract_title\": \"...\",\n  \"extract_content\": \"...\",\n  \"tags\": [\"tag1\", \"tag2\"]\n}\n\n"
-                f"Content:\n{content[:3000]}"
+                f"Content:\n{content[:5000]}"
             )
             
         response = openai.ChatCompletion.create(
-            model="gpt-4",
+            model=model,
             messages=[
                 {"role": "system", "content": "You analyze content and extract semantic meaning."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=500
+            max_tokens=extract_length  # Dynamic based on content
         )
         raw = response["choices"][0]["message"]["content"]
         parsed = json.loads(raw)
@@ -250,9 +412,13 @@ def organize_files():
                 if file_type == "pdf":
                     text_content = extract_text_from_pdf(input_path)
                     extraction_method = "pdfplumber"
+                    
+                    # Check if this is a LinkedIn post
+                    is_linkedin = "linkedin.com" in text_content.lower() or "Profile viewers" in text_content[:500]
                 elif file_type == "image":
                     text_content = extract_text_from_image(input_path)
                     extraction_method = "ocr"
+                    is_linkedin = False
                 else:
                     with open(input_path, "rb") as f:
                         raw_bytes = f.read()
@@ -262,6 +428,7 @@ def organize_files():
                     except UnicodeDecodeError:
                         text_content = raw_bytes.decode("latin-1")
                         extraction_method = "decode"
+                    is_linkedin = False
 
                 log_f.write(f"📝 Raw Text Preview:\n{text_content[:500]}\n")
 
@@ -269,8 +436,24 @@ def organize_files():
                 urls, potential_titles = extract_urls(text_content)
                 urls_metadata = {}
                 
+                # Special handling for resource lists - add potential titles as "reference links"
+                if file_type == "pdf" and ("resources" in text_content.lower() or text_content.count("\n1)") > 1):
+                    if len(potential_titles) > 3:  # If we found several potential resource titles
+                        log_f.write(f"📚 Detected resource list with {len(potential_titles)} potential references\n")
+                        
+                        # Store reference metadata
+                        for title in potential_titles:
+                            urls_metadata[title] = {
+                                "title": title,
+                                "description": "Referenced resource",
+                                "url": f"reference:{title}"  # Use a special prefix to indicate this isn't a real URL
+                            }
+                
                 if urls:
-                    enriched, urls_metadata = enrich_urls(urls, potential_titles)
+                    enriched, url_data = enrich_urls(urls, potential_titles)
+                    # Update the metadata with real URL data
+                    urls_metadata.update(url_data)
+                    
                     # Add the enriched URLs to a separate section
                     url_section = "\n\n---\n\n## Referenced Links\n" + enriched
                     
@@ -282,10 +465,21 @@ def organize_files():
                 today = time.strftime("%Y-%m-%d")
                 md_filename = f"{today}_{base_name}.md"
 
-                title, extract, tags = get_extract(text_content, file_type, urls_metadata, log_f)
+                # For resource lists, store the list of references in metadata
+                if file_type == "pdf" and ("resources" in text_content.lower() or text_content.count("\n1)") > 1):
+                    has_resource_patterns = True
+                    if len(potential_titles) > 3:  # If we found several potential resource titles
+                        metadata["referenced_resources"] = potential_titles
+                else:
+                    has_resource_patterns = False
+                    
+                title, extract, tags = get_extract(text_content, file_type, urls_metadata, log_f, is_linkedin)
 
                 # Default category based on file type
-                category = "Reference" if file_type == "pdf" else "Image" if file_type == "image" else "Note"
+                if is_linkedin:
+                    category = "LinkedIn Post"
+                else:
+                    category = "Reference" if file_type == "pdf" else "Image" if file_type == "image" else "Note"
                 
                 # Try to improve tags when we have little information
                 if tags == ["uncategorized"] or tags == ["untagged"]:
