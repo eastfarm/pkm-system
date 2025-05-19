@@ -6,6 +6,7 @@ import openai
 import re
 import json
 from pathlib import Path
+import pdfplumber
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
@@ -44,6 +45,13 @@ def get_extract(content, log_f=None):
             log_f.write(f"OpenAI ERROR: {e}\n")
         return "Extract not available", ["uncategorized"]
 
+def extract_text_from_pdf(path):
+    try:
+        with pdfplumber.open(path) as pdf:
+            return "\n".join(page.extract_text() or "" for page in pdf.pages)
+    except Exception as e:
+        return f"[PDF extraction failed: {e}]"
+
 def infer_file_type(filename):
     ext = Path(filename).suffix.lower()
     if ext in [".md", ".txt"]: return "text"
@@ -76,15 +84,21 @@ def organize_files():
                 log_f.write(f"Processing {filename}\n")
 
                 input_path = os.path.join(inbox, filename)
-                with open(input_path, "rb") as f:
-                    raw_bytes = f.read()
-
-                try:
-                    text_content = raw_bytes.decode("utf-8")
-                except UnicodeDecodeError:
-                    text_content = raw_bytes.decode("latin-1")
-
                 file_type = infer_file_type(filename)
+
+                if file_type == "pdf":
+                    text_content = extract_text_from_pdf(input_path)
+                    extraction_method = "pdfplumber"
+                else:
+                    with open(input_path, "rb") as f:
+                        raw_bytes = f.read()
+                    try:
+                        text_content = raw_bytes.decode("utf-8")
+                        extraction_method = "decode"
+                    except UnicodeDecodeError:
+                        text_content = raw_bytes.decode("latin-1")
+                        extraction_method = "decode"
+
                 base_name = Path(filename).stem
                 today = time.strftime("%Y-%m-%d")
                 md_filename = f"{today}_{base_name}.md"
@@ -100,7 +114,9 @@ def organize_files():
                     "tags": tags,
                     "author": "Unknown",
                     "extract": extract,
-                    "reviewed": False
+                    "reviewed": False,
+                    "parse_status": "success",
+                    "extraction_method": extraction_method
                 }
 
                 post = frontmatter.Post(
