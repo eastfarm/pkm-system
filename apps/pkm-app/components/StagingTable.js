@@ -36,7 +36,7 @@ export default function StagingTable({ files, onApprove }) {
           <th style={{ textAlign: "left" }}>Title</th>
           <th>Tags</th>
           <th>Category</th>
-          <th>Summary</th>
+          <th>Extract</th>
           <th>Approve</th>
         </tr>
       </thead>
@@ -62,8 +62,8 @@ export default function StagingTable({ files, onApprove }) {
             </td>
             <td>
               <textarea
-                value={file.metadata?.summary || ""}
-                onChange={(e) => handleChange(index, "summary", e.target.value)}
+                value={file.metadata?.extract || ""}
+                onChange={(e) => handleChange(index, "extract", e.target.value)}
                 style={{ width: "100%", height: "100px" }}
               />
             </td>

@@ -9,18 +9,20 @@ from pathlib import Path
 
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-def get_metadata(content, log_f=None):
+def get_extract(content, log_f=None):
     try:
         prompt = (
-            f"Please return a short metadata object in JSON format.\n"
-            f"Input:\n{content[:3000]}\n\n"
-            f"Return format:\n"
-            f'{{"summary": "...", "tags": ["tag1", "tag2", "tag3"]}}'
+            "You are a critical reader and semantic summarizer. Your task is to extract the core insights and arguments from the document below.\n\n"
+            "Ignore layout, metadata, and technical structure (e.g., PDF version, file format).\n\n"
+            "Focus on meaning, not structure. Identify the main themes, ideas, or takeaways in clear language.\n\n"
+            "Respond in this JSON format:\n"
+            '{\n  "extract": "...",\n  "tags": ["tag1", "tag2"]\n}\n\n'
+            f"Content:\n{content[:3000]}"
         )
         response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that summarizes content and generates structured metadata."},
+                {"role": "system", "content": "You summarize content into clear extracts and thematic tags."},
                 {"role": "user", "content": prompt}
             ],
             max_tokens=300
@@ -28,19 +30,19 @@ def get_metadata(content, log_f=None):
 
         raw = response["choices"][0]["message"]["content"]
         parsed = json.loads(raw)
-        summary = parsed.get("summary", "Summary not available")
+        extract = parsed.get("extract", "Extract not available")
         tags = parsed.get("tags", ["uncategorized"])
 
         if log_f:
             log_f.write("OpenAI raw response:\n")
             log_f.write(raw + "\n\n")
 
-        return summary, tags
+        return extract, tags
 
     except Exception as e:
         if log_f:
             log_f.write(f"OpenAI ERROR: {e}\n")
-        return "Summary not available", ["uncategorized"]
+        return "Extract not available", ["uncategorized"]
 
 def infer_file_type(filename):
     ext = Path(filename).suffix.lower()
@@ -87,7 +89,7 @@ def organize_files():
                 today = time.strftime("%Y-%m-%d")
                 md_filename = f"{today}_{base_name}.md"
 
-                summary, tags = get_metadata(text_content, log_f)
+                extract, tags = get_extract(text_content, log_f)
 
                 metadata = {
                     "title": base_name,
@@ -97,7 +99,7 @@ def organize_files():
                     "source_url": None,
                     "tags": tags,
                     "author": "Unknown",
-                    "summary": summary,
+                    "extract": extract,
                     "reviewed": False
                 }
 
