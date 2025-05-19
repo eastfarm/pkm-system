@@ -17,3 +17,4 @@ torch==1.13.1+cpu
 --extra-index-url https://download.pytorch.org/whl/cpu
 numpy==1.23.5
 python-multipart==0.0.9
+unstructured
