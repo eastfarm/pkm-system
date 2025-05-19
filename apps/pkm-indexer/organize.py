@@ -35,14 +35,14 @@ def extract_text_from_image(path):
         image = Image.open(path).convert("L")  # Grayscale
         image = image.point(lambda x: 0 if x < 140 else 255)  # Threshold
         text = pytesseract.image_to_string(image, lang="eng")
-        print("🖼️ OCR Result Preview:\n", text[:300])
+        print("🖼️ OCR output:", repr(text[:500]))
         return text
     except Exception as e:
         return f"[OCR failed: {e}]"
 
 def extract_urls(text):
     urls = re.findall(r"https?://\S+", text)
-    print("🔗 Detected URLs:", urls)
+    print("🔗 URLs detected:", urls)
     return urls
 
 def enrich_urls(urls):
@@ -55,10 +55,12 @@ def enrich_urls(urls):
             enriched.append(f"- [{title}]({url})")
         except Exception:
             enriched.append(f"- {url} (unreachable)")
+    print("🔍 Enriched URLs block:\n", "\n".join(enriched))
     return "\n".join(enriched)
 
 def get_extract(content, log_f=None):
     try:
+        print("🧠 Content sent to GPT (preview):\n", content[:500])
         prompt = (
             "You are a semantic summarizer. Return a short title and a deeper thematic summary, plus relevant tags.\n\n"
             "Respond in this JSON format:\n"
@@ -167,6 +169,7 @@ def organize_files():
 
             except Exception as e:
                 log_f.write(f"❌ Error processing {filename}: {str(e)}\n")
+                print(f"❌ ERROR in organize_files(): {e}")
                 continue
 
     print("🏁 organize_files() complete.")
