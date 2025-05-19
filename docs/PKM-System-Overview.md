@@ -18,6 +18,57 @@ All data will be transformed into structured markdown metadata records containin
 
 ### **Enhancement Ideas & Future Considerations**
 
+#### **Approval Workflow: Save vs Reprocess**
+
+* Metadata schema will include:
+
+  * `reprocess_status`: `none`, `requested`, `in_progress`, `complete`
+  * `reprocess_rounds`: count of times a file has been reprocessed
+  * `reprocess_notes`: optional user instructions for improving analysis or clarifying intent
+  * `processing_profile`: preset applied by system or selected by user (e.g. `quote`, `memo`, `report`)
+
+* Replace the current "Approve" model with two options: **Save** and **Reprocess**.
+
+* **Save** finalizes the current extract, tags, and metadata.
+
+* **Reprocess** allows the user to:
+
+  * Add clarifying instructions (e.g. “This is a quote from a lecture; just tag it”)
+  * Trigger a new LLM extract or retry with a different method
+  * Eventually choose from prompt profiles (e.g. `quote`, `memo`, `deep_analysis`)
+
+* A background agent (LLM-based or rules-based) will monitor failed or reprocessed records and:
+
+  * Normalize freeform reprocessing instructions
+  * Suggest or auto-assign standard `processing_profile` values
+  * Improve consistency and performance of future LLM prompts
+
+* This pattern supports:
+
+  * Recovery from failed extractions
+  * Higher-quality metadata over time
+  * User involvement in steering extract quality
+
+* Reprocessing will not be implemented in the MVP, but all systems (metadata format, staging UI, and LLM prompt structure) should anticipate its future role.
+
+* Replace the current "Approve" model with two options: **Save** and **Reprocess**.
+
+* **Save** finalizes the current extract, tags, and metadata.
+
+* **Reprocess** allows the user to:
+
+  * Add clarifying instructions (e.g. “This is a quote from a lecture; just tag it”)
+  * Trigger a new LLM extract or retry with a different method
+  * Eventually choose from prompt profiles (e.g. `quote`, `memo`, `deep_analysis`)
+
+* This pattern supports:
+
+  * Recovery from failed extractions
+  * Higher-quality metadata over time
+  * User involvement in steering extract quality
+
+* Reprocessing will not be implemented in the MVP, but all systems (metadata format, staging UI, and LLM prompt structure) should anticipate its future role.
+
 #### **1. Extract as Primary Field**
 
 * The `extract` field replaces `summary` and is the primary semantic output for each document.
@@ -63,6 +114,35 @@ All data will be transformed into structured markdown metadata records containin
 ---
 
 ### **Architecture**
+
+#### **Cloud-Based OneDrive Integration (Planned)**
+
+* The system will use the Microsoft Graph API to interface directly with OneDrive.
+* Files will be read from `/PKM/Inbox` without being moved or deleted until successful processing is confirmed.
+* For each file in OneDrive:
+
+  1. A copy is downloaded for processing.
+  2. Metadata is generated using `organize.py` (including extract, tags, etc.).
+  3. The resulting `.md` file is uploaded to `/PKM/Processed/Metadata/`
+  4. The original file is uploaded to `/PKM/Processed/Sources/<filetype>/`
+  5. Only after both uploads succeed, the file is removed from `/PKM/Inbox`
+* This ensures data safety and consistency, avoiding the risk of lost or partially processed files.
+* In the future, failed attempts can be tagged or moved to a `/PKM/Errors/` folder for review.
+* Authentication will use Microsoft Graph’s device code flow or secure app credentials stored in Railway environment variables.
+
+#### **MVP Improvements Implemented**
+
+* File-type-specific extraction is now in place:
+
+  * `.pdf` files are parsed using `pdfplumber`
+  * Text files are decoded as UTF-8 with fallback
+* The metadata schema now includes:
+
+  * `parse_status`: `success` or `failed`
+  * `extraction_method`: `pdfplumber`, `decode`, etc.
+* LLM prompts have been rephrased to extract meaning rather than format
+* Errors and raw LLM outputs are logged in detail for debugging
+* The backend now supports reliable extract generation from real-world PDFs
 
 #### **Backend (pkm-indexer)**
 

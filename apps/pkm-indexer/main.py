@@ -1,160 +1,64 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from fastapi.middleware.cors import CORSMiddleware
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi.responses import HTMLResponse
-from organize import organize_files
-from index import indexKB, searchKB
+# main.py
+
 import os
-import frontmatter
-import shutil
-import re
-import base64
+from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse, JSONResponse
+from google_auth_oauthlib.flow import Flow
+from google.oauth2.credentials import Credentials
+from pydantic import BaseModel
+import json
 
 app = FastAPI()
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+SCOPES = ["https://www.googleapis.com/auth/drive"]
+REDIRECT_URI = os.environ["GOOGLE_REDIRECT_URI"]
 
-scheduler = AsyncIOScheduler()
+CLIENT_CONFIG = {
+    "web": {
+        "client_id": os.environ["GOOGLE_CLIENT_ID"],
+        "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
+        "redirect_uris": [REDIRECT_URI],
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }
+}
 
-class Query(BaseModel):
-    query: str
+# ─── OAuth2 AUTH FLOW ──────────────────────────────────────────────
 
-class File(BaseModel):
-    file: dict
+@app.get("/auth/initiate")
+def auth_initiate():
+    flow = Flow.from_client_config(CLIENT_CONFIG, scopes=SCOPES, redirect_uri=REDIRECT_URI)
+    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
+    return RedirectResponse(auth_url)
 
-@app.post("/search")
-async def search(query: Query):
-    results = await searchKB(query.query)
-    return {"response": results}
+@app.get("/oauth/callback")
+async def auth_callback(request: Request):
+    code = request.query_params.get("code")
+    if not code:
+        return JSONResponse(status_code=400, content={"error": "Missing auth code"})
+
+    flow = Flow.from_client_config(CLIENT_CONFIG, scopes=SCOPES, redirect_uri=REDIRECT_URI)
+    flow.fetch_token(code=code)
+    creds = flow.credentials
+
+    with open("token.json", "w") as token_file:
+        token_file.write(creds.to_json())
+
+    return {"status": "✅ Authentication successful. token.json saved."}
+
+
+# ─── MOCK STAGING API (FOR MVP FUNCTIONALITY TEST) ─────────────────
 
 @app.get("/staging")
-async def get_staging():
-    metadata_path = "pkm/Processed/Metadata"
-    os.makedirs(metadata_path, exist_ok=True)
-    files = []
-    for f in [f for f in os.listdir(metadata_path) if f.endswith(".md")]:
-        with open(os.path.join(metadata_path, f), "r", encoding="utf-8") as file:
-            post = frontmatter.load(file)
-            files.append({
-                "name": f,
-                "content": post.content,
-                "metadata": post.metadata
-            })
-    return {"files": files}
+def get_staging():
+    return {"status": "placeholder", "message": "List unprocessed files here"}
 
 @app.post("/approve")
-async def approve(file: File):
-    approved_dir = "pkm/Approved"
-    os.makedirs(approved_dir, exist_ok=True)
+def approve_file(payload: dict):
+    return {"status": "approved", "payload": payload}
 
-    file_data = file.file
-    md_file = file_data["name"]
-    content = file_data["content"]
-    metadata = file_data["metadata"]
+@app.post("/trigger-organize")
+def trigger_organize():
+    return {"status": "started", "message": "organize.py would run now"}
 
-    post = frontmatter.Post(content=content, **metadata)
-    with open(os.path.join(approved_dir, md_file), "w", encoding="utf-8") as f:
-        frontmatter.dump(post, f)
-
-    return {"status": f"Approved {md_file}"}
-
-@app.post("/organize")
-async def manual_organize():
-    organize_files()
-    return {"status": "Organized"}
-
-@app.get("/trigger-organize")
-async def trigger_organize():
-    organize_files()
-    return {"status": "Organized"}
-
-@app.post("/upload/{folder}")
-async def upload_file(folder: str, file_data: dict):
-    allowed_folders = ["Inbox"]
-    if folder not in allowed_folders:
-        raise HTTPException(status_code=400, detail="Invalid folder")
-
-    path = f"pkm/{folder}"
-    os.makedirs(path, exist_ok=True)
-
-    filename = file_data.get("filename")
-    content = file_data.get("content")
-
-    if not filename or not content:
-        raise HTTPException(status_code=400, detail="Filename and content are required")
-
-    try:
-        decoded = base64.b64decode(content.encode())
-        with open(os.path.join(path, filename), "wb") as f:
-            f.write(decoded)
-        return {"status": f"File uploaded to {folder}"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
-
-@app.get("/files/{folder:path}")
-async def list_files(folder: str):
-    base_path = os.path.join("pkm", *folder.split("/"))
-    if not os.path.exists(base_path):
-        raise HTTPException(status_code=404, detail="Folder not found")
-    files = []
-    for root, _, filenames in os.walk(base_path):
-        for filename in filenames:
-            rel_path = os.path.relpath(os.path.join(root, filename), base_path)
-            files.append(rel_path)
-    return {"files": files}
-
-@app.get("/file-content/{folder:path}")
-async def get_file_content(folder: str):
-    file_path = os.path.join("pkm", *folder.split("/"))
-    if not os.path.isfile(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            return f.read()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Could not read file: {e}")
-
-@app.get("/logs", response_class=HTMLResponse)
-async def log_index():
-    log_dir = "pkm/Logs"
-    if not os.path.exists(log_dir):
-        return "<h2>No logs found</h2>"
-    links = []
-    for f in sorted(os.listdir(log_dir), reverse=True):
-        if f.endswith(".md"):
-            url = f"/file-content/Logs/{f}"
-            links.append(f'<li><a href="{url}">{f}</a></li>')
-    return f"<h2>Log Files</h2><ul>{''.join(links)}</ul>"
-
-@app.get("/", response_class=HTMLResponse)
-async def home():
-    links = [
-        '<li><a href="/staging">Review Staging Files</a></li>',
-        '<li><a href="/logs">View Logs</a></li>',
-        '<li><a href="/files/Processed/Metadata">View Metadata Files</a></li>',
-        '<li><a href="/files/Processed/Sources">View Source Files</a></li>'
-    ]
-    return f"<h2>PKM System Navigation</h2><ul>{''.join(links)}</ul>"
-
-@app.on_event("startup")
-async def startup_event():
-    os.makedirs("pkm/Inbox", exist_ok=True)
-    os.makedirs("pkm/Processed/Metadata", exist_ok=True)
-    os.makedirs("pkm/Processed/Sources", exist_ok=True)
-    os.makedirs("pkm/Logs", exist_ok=True)
-    os.makedirs("pkm/Approved", exist_ok=True)
-
-    try:
-        await indexKB()
-    except Exception as e:
-        print(f"Startup indexing error: {e}")
-
-    scheduler.add_job(organize_files, "cron", hour=2)
-    scheduler.start()
+# Add file content handlers, Drive sync endpoints, etc. here as needed.
