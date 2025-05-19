@@ -39,11 +39,11 @@ async def get_staging():
     metadata_path = "pkm/Processed/Metadata"
     os.makedirs(metadata_path, exist_ok=True)
     files = []
-    for md_file in [f for f in os.listdir(metadata_path) if md_file.endswith(".md")]:
-        with open(os.path.join(metadata_path, md_file), "r", encoding="utf-8") as f:
-            post = frontmatter.load(f)
+    for f in [f for f in os.listdir(metadata_path) if f.endswith(".md")]:
+        with open(os.path.join(metadata_path, f), "r", encoding="utf-8") as file:
+            post = frontmatter.load(file)
             files.append({
-                "name": md_file,
+                "name": f,
                 "content": post.content,
                 "metadata": post.metadata
             })
