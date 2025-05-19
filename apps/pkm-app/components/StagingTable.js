@@ -29,7 +29,20 @@ export default function StagingTable({ files, onApprove }) {
       ...rows[index],
       metadata: {
         ...rows[index].metadata,
-        reviewed: true
+        reviewed: true,
+        reprocess_status: "none"
+      }
+    };
+    await onApprove(updatedFile);
+  };
+
+  const handleReprocess = async (index) => {
+    const updatedFile = {
+      ...rows[index],
+      metadata: {
+        ...rows[index].metadata,
+        reprocess_status: "requested",
+        reprocess_rounds: (parseInt(rows[index].metadata.reprocess_rounds || 0) + 1).toString()
       }
     };
     await onApprove(updatedFile);
@@ -60,71 +73,191 @@ export default function StagingTable({ files, onApprove }) {
            '';
   };
 
+  const tableStyle = {
+    width: "100%", 
+    borderCollapse: "collapse",
+    tableLayout: "fixed"  // Fixed layout for better column control
+  };
+
+  const thStyle = {
+    textAlign: "left", 
+    padding: "8px", 
+    borderBottom: "2px solid #ddd",
+    backgroundColor: "#f5f5f5",
+    fontSize: "14px"
+  };
+
+  const cellStyle = {
+    padding: "8px",
+    verticalAlign: "top",
+    borderBottom: "1px solid #ddd"
+  };
+
   return (
     <div>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+      <table style={tableStyle}>
+        <colgroup>
+          <col style={{ width: "20%" }} /> {/* Title */}
+          <col style={{ width: "10%" }} /> {/* Category */}
+          <col style={{ width: "15%" }} /> {/* Tags */}
+          <col style={{ width: "45%" }} /> {/* Extract */}
+          <col style={{ width: "10%" }} /> {/* Actions */}
+        </colgroup>
         <thead>
           <tr>
-            <th style={{ textAlign: "left", padding: "10px", borderBottom: "2px solid #ddd" }}>Title</th>
-            <th style={{ textAlign: "left", padding: "10px", borderBottom: "2px solid #ddd" }}>Tags</th>
-            <th style={{ textAlign: "left", padding: "10px", borderBottom: "2px solid #ddd" }}>Category</th>
-            <th style={{ textAlign: "left", padding: "10px", borderBottom: "2px solid #ddd" }}>Extract</th>
-            <th style={{ textAlign: "center", padding: "10px", borderBottom: "2px solid #ddd" }}>Approve</th>
+            <th style={thStyle}>Title</th>
+            <th style={thStyle}>Category</th>
+            <th style={thStyle}>Tags</th>
+            <th style={thStyle}>Extract</th>
+            <th style={thStyle}>Actions</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((file, index) => (
-            <tr key={index} style={{ borderBottom: "1px solid #ccc" }}>
-              <td style={{ padding: "10px" }}>
-                <strong>{file.metadata?.title || file.metadata?.extract_title || file.name}</strong>
+            <tr key={index} style={{ borderBottom: "1px solid #eee" }}>
+              <td style={cellStyle}>
+                <input
+                  type="text"
+                  value={file.metadata?.title || file.metadata?.extract_title || file.name}
+                  onChange={(e) => handleChange(index, "title", e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "4px",
+                    border: "1px solid #ddd",
+                    borderRadius: "4px",
+                    fontSize: "14px"
+                  }}
+                />
+                <div style={{ 
+                  fontSize: "12px", 
+                  color: "#666", 
+                  marginTop: "4px",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis"
+                }}>
+                  {file.name}
+                </div>
               </td>
-              <td style={{ padding: "10px" }}>
+              <td style={cellStyle}>
+                <select
+                  value={file.metadata?.category || ""}
+                  onChange={(e) => handleChange(index, "category", e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "4px",
+                    border: "1px solid #ddd",
+                    borderRadius: "4px",
+                    backgroundColor: "white"
+                  }}
+                >
+                  <option value="">Select...</option>
+                  <option value="Reference">Reference</option>
+                  <option value="Note">Note</option>
+                  <option value="Image">Image</option>
+                  <option value="LinkedIn Post">LinkedIn Post</option>
+                  <option value="Resource List">Resource List</option>
+                  <option value="Book">Book</option>
+                  <option value="Article">Article</option>
+                  <option value="Paper">Paper</option>
+                </select>
+              </td>
+              <td style={cellStyle}>
                 <input
                   type="text"
                   value={formatTags(file.metadata?.tags)}
                   onChange={(e) => handleChange(index, "tags", e.target.value)}
-                  style={{ width: "100%", padding: "5px" }}
+                  style={{
+                    width: "100%",
+                    padding: "4px",
+                    border: "1px solid #ddd",
+                    borderRadius: "4px",
+                    fontSize: "14px"
+                  }}
+                  placeholder="tag1, tag2, tag3"
                 />
               </td>
-              <td style={{ padding: "10px" }}>
-                <input
-                  type="text"
-                  value={file.metadata?.category || ""}
-                  onChange={(e) => handleChange(index, "category", e.target.value)}
-                  style={{ width: "100%", padding: "5px" }}
-                />
-              </td>
-              <td style={{ padding: "10px" }}>
+              <td style={cellStyle}>
                 <textarea
                   value={getExtractContent(file)}
                   onChange={(e) => handleChange(index, "extract_content", e.target.value)}
-                  style={{ width: "100%", height: "150px", padding: "5px" }}
-                />
-                {file.content && file.content.length > 1000 && (
-                  <div style={{ marginTop: "5px", fontSize: "12px", color: "#666" }}>
-                    <a href="#" onClick={(e) => {
-                      e.preventDefault();
-                      handleChange(index, "extract_content", file.content);
-                    }}>
-                      Load full content ({Math.round(file.content.length / 1000)}K chars)
-                    </a>
-                  </div>
-                )}
-              </td>
-              <td style={{ padding: "10px", textAlign: "center" }}>
-                <button 
-                  onClick={() => handleApprove(index)}
-                  style={{ 
-                    padding: "8px 15px", 
-                    backgroundColor: "#4CAF50", 
-                    color: "white", 
-                    border: "none", 
+                  style={{
+                    width: "100%",
+                    height: "200px",
+                    padding: "8px",
+                    border: "1px solid #ddd",
                     borderRadius: "4px",
-                    cursor: "pointer"
+                    fontSize: "14px",
+                    lineHeight: "1.4"
                   }}
-                >
-                  Approve
-                </button>
+                />
+                
+                <div style={{ marginTop: "8px" }}>
+                  <label style={{ 
+                    display: "block", 
+                    fontSize: "13px", 
+                    fontWeight: "bold",
+                    marginBottom: "4px"
+                  }}>
+                    Reprocess Notes:
+                  </label>
+                  <textarea
+                    value={file.metadata?.reprocess_notes || ""}
+                    onChange={(e) => handleChange(index, "reprocess_notes", e.target.value)}
+                    placeholder="Add notes for reprocessing (e.g., 'This is a quote, just extract key ideas')"
+                    style={{
+                      width: "100%",
+                      height: "60px",
+                      padding: "4px",
+                      border: "1px solid #ddd",
+                      borderRadius: "4px",
+                      fontSize: "13px"
+                    }}
+                  />
+                </div>
+              </td>
+              <td style={{...cellStyle, textAlign: "center"}}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  <button 
+                    onClick={() => handleApprove(index)}
+                    style={{ 
+                      padding: "8px", 
+                      backgroundColor: "#4CAF50", 
+                      color: "white", 
+                      border: "none", 
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      fontSize: "14px"
+                    }}
+                  >
+                    Save
+                  </button>
+                  <button 
+                    onClick={() => handleReprocess(index)}
+                    style={{ 
+                      padding: "8px", 
+                      backgroundColor: "#2196F3", 
+                      color: "white", 
+                      border: "none", 
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      fontSize: "14px"
+                    }}
+                  >
+                    Reprocess
+                  </button>
+                </div>
+                
+                <div style={{ 
+                  marginTop: "10px", 
+                  fontSize: "12px", 
+                  color: "#666" 
+                }}>
+                  Status: {file.metadata?.reprocess_status || "new"}
+                  {file.metadata?.reprocess_rounds && 
+                    <div>Rounds: {file.metadata.reprocess_rounds}</div>
+                  }
+                </div>
               </td>
             </tr>
           ))}
@@ -138,13 +271,25 @@ export default function StagingTable({ files, onApprove }) {
         </tbody>
       </table>
       
-      <div style={{ marginTop: "20px", fontSize: "14px", color: "#666", padding: "10px", backgroundColor: "#f9f9f9", borderRadius: "4px" }}>
-        <p><strong>Tips:</strong></p>
-        <ul>
-          <li>Tags should be comma-separated (e.g., "AI, resources, learning")</li>
-          <li>Extract can be modified before approval</li>
-          <li>Click Approve when you're satisfied with the metadata</li>
-        </ul>
+      <div style={{ 
+        marginTop: "20px", 
+        fontSize: "14px", 
+        color: "#666", 
+        padding: "15px", 
+        backgroundColor: "#f9f9f9", 
+        borderRadius: "4px",
+        display: "flex",
+        justifyContent: "space-between"
+      }}>
+        <div>
+          <strong>Save</strong>: Finalize the current extract and metadata.
+        </div>
+        <div>
+          <strong>Reprocess</strong>: Request AI to regenerate the extract with your notes.
+        </div>
+        <div>
+          <strong>Tags</strong>: Comma-separated values.
+        </div>
       </div>
     </div>
   );

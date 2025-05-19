@@ -378,28 +378,68 @@ async def approve_file(payload: dict):
     
     if not file_name:
         return JSONResponse(status_code=400, content={"error": "Missing file name"})
+
+    # Handle reprocess request
+    if metadata.get("reprocess_status") == "requested":
+        try:
+            print(f"Reprocessing requested for {file_name}")
+            # Save the current metadata with reprocess status
+            metadata["reprocess_status"] = "in_progress"
+            
+            # Get the file path
+            file_path = f"pkm/Processed/Metadata/{file_name}"
+            
+            # Format tags for YAML
+            if "tags" in metadata and isinstance(metadata["tags"], list):
+                tags_yaml = "\n- " + "\n- ".join(metadata["tags"])
+                metadata["tags"] = tags_yaml
+            
+            # Rebuild the file with updated metadata
+            metadata_lines = []
+            for key, value in metadata.items():
+                metadata_lines.append(f"{key}: {value}")
+                
+            file_content = "---\n" + "\n".join(metadata_lines) + "\n---\n\n" + content
+            
+            # Save the updated file
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(file_content)
+                
+            # Start a background task for reprocessing
+            # This could be enhanced to actually reprocess using AI
+            # For now, we just mark it as completed
+            metadata["reprocess_status"] = "complete"
+            
+            return {"status": "reprocessing", "filename": file_name}
+            
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": f"Failed to queue reprocessing: {str(e)}"})
         
-    # Format tags for YAML
-    if "tags" in metadata and isinstance(metadata["tags"], list):
-        tags_yaml = "\n- " + "\n- ".join(metadata["tags"])
-        metadata["tags"] = tags_yaml
+    # Standard approval flow
+    try:
+        # Format tags for YAML
+        if "tags" in metadata and isinstance(metadata["tags"], list):
+            tags_yaml = "\n- " + "\n- ".join(metadata["tags"])
+            metadata["tags"] = tags_yaml
         
-    # Make sure reviewed is set to true
-    metadata["reviewed"] = "true"
-    
-    # Rebuild the file with updated metadata
-    metadata_lines = []
-    for key, value in metadata.items():
-        metadata_lines.append(f"{key}: {value}")
+        # Make sure reviewed is set to true
+        metadata["reviewed"] = "true"
         
-    file_content = "---\n" + "\n".join(metadata_lines) + "\n---\n\n" + content
-    
-    # Save the updated file
-    file_path = f"pkm/Processed/Metadata/{file_name}"
-    with open(file_path, "w", encoding="utf-8") as f:
-        f.write(file_content)
+        # Rebuild the file with updated metadata
+        metadata_lines = []
+        for key, value in metadata.items():
+            metadata_lines.append(f"{key}: {value}")
+            
+        file_content = "---\n" + "\n".join(metadata_lines) + "\n---\n\n" + content
         
-    return {"status": "approved", "filename": file_name}
+        # Save the updated file
+        file_path = f"pkm/Processed/Metadata/{file_name}"
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(file_content)
+            
+        return {"status": "approved", "filename": file_name}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to approve: {str(e)}"})
 
 # ─── PROCESS FILES ENDPOINT ─────────────────────────────────────────
 
