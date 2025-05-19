@@ -406,8 +406,15 @@ async def approve_file(payload: dict):
 @app.post("/trigger-organize")
 def trigger_organize():
     """Trigger the file organization process"""
-    result = organize_files()
-    return {"status": "Files processed and organized"}
+    try:
+        result = organize_files()
+        return {
+            "status": f"Files processed and organized: {result['success_count']} successful, {len(result['failed_files'])} failed",
+            "log_file": result['log_file'],
+            "failed_files": result['failed_files']
+        }
+    except Exception as e:
+        return {"status": f"Organization error: {str(e)}", "error": str(e)}
 
 # ─── SEARCH ENDPOINT ───────────────────────────────────────────────
 

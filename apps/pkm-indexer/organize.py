@@ -392,12 +392,18 @@ def organize_files():
     source_out = "pkm/Processed/Sources"
     logs = "pkm/Logs"
 
+    # Create a detailed log of this run
     os.makedirs(inbox, exist_ok=True)
     os.makedirs(meta_out, exist_ok=True)
     os.makedirs(source_out, exist_ok=True)
     os.makedirs(logs, exist_ok=True)
 
     log_file_path = os.path.join(logs, f"log_organize_{int(time.time())}.md")
+    
+    # Return value to indicate success
+    success_count = 0
+    failed_files = []
+    
     with open(log_file_path, "a", encoding="utf-8") as log_f:
         log_f.write(f"# Organize run at {time.time()}\n\n")
 
@@ -410,6 +416,9 @@ def organize_files():
                 input_path = os.path.join(inbox, filename)
                 file_type = infer_file_type(filename)
 
+                log_f.write(f"- File type detected: {file_type}\n")
+                
+                # Extract text based on file type
                 if file_type == "pdf":
                     text_content = extract_text_from_pdf(input_path)
                     extraction_method = "pdfplumber"
@@ -431,16 +440,28 @@ def organize_files():
                         extraction_method = "decode"
                     is_linkedin = False
 
-                log_f.write(f"📝 Raw Text Preview:\n{text_content[:500]}\n")
+                log_f.write(f"- Extraction method: {extraction_method}\n")
+                log_f.write(f"- Text content length: {len(text_content)} characters\n")
+                log_f.write(f"- Preview:\n```\n{text_content[:500]}\n```\n")
 
                 # Enhanced URL processing
                 urls, potential_titles = extract_urls(text_content)
+                log_f.write(f"- Detected URLs: {urls}\n")
+                log_f.write(f"- Potential titles: {potential_titles[:5]}\n")
+                
+                # For resource lists, store the list of references in metadata
+                if file_type == "pdf" and ("resources" in text_content.lower() or text_content.count("\n1)") > 1):
+                    has_resource_patterns = True
+                    log_f.write(f"- Detected resource list pattern\n")
+                else:
+                    has_resource_patterns = False
+                
                 urls_metadata = {}
                 
                 # Special handling for resource lists - add potential titles as "reference links"
                 if file_type == "pdf" and ("resources" in text_content.lower() or text_content.count("\n1)") > 1):
                     if len(potential_titles) > 3:  # If we found several potential resource titles
-                        log_f.write(f"📚 Detected resource list with {len(potential_titles)} potential references\n")
+                        log_f.write(f"- Detected resource list with {len(potential_titles)} potential references\n")
                         
                         # Store reference metadata
                         for title in potential_titles:
@@ -457,24 +478,25 @@ def organize_files():
                     
                     # Add the enriched URLs to a separate section
                     url_section = "\n\n---\n\n## Referenced Links\n" + enriched
-                    
-                    # Don't modify the original text content, keep it untouched
-                    # Instead store the enriched URL data for display purposes
-                    metadata["url_section"] = url_section
+                    log_f.write(f"- Added enriched URL section\n")
 
                 base_name = Path(filename).stem
                 today = time.strftime("%Y-%m-%d")
                 md_filename = f"{today}_{base_name}.md"
+                log_f.write(f"- Output metadata filename: {md_filename}\n")
 
-                # For resource lists, store the list of references in metadata
-                if file_type == "pdf" and ("resources" in text_content.lower() or text_content.count("\n1)") > 1):
-                    has_resource_patterns = True
-                    if len(potential_titles) > 3:  # If we found several potential resource titles
-                        metadata["referenced_resources"] = potential_titles
-                else:
-                    has_resource_patterns = False
-                    
-                title, extract, tags = get_extract(text_content, file_type, urls_metadata, log_f, is_linkedin)
+                # Get extract from GPT
+                log_f.write(f"- Generating extract via OpenAI API\n")
+                try:
+                    title, extract, tags = get_extract(text_content, file_type, urls_metadata, log_f, is_linkedin)
+                    log_f.write(f"- Extract generated successfully\n")
+                    log_f.write(f"- Title: {title}\n")
+                    log_f.write(f"- Tags: {tags}\n")
+                except Exception as extract_error:
+                    log_f.write(f"- ❌ Extract generation failed: {str(extract_error)}\n")
+                    title = "Extraction Failed: " + base_name
+                    extract = f"Failed to generate extract: {str(extract_error)}"
+                    tags = ["extraction_failed", "needs_review"]
 
                 # Default category based on file type
                 if is_linkedin:
@@ -513,7 +535,12 @@ def organize_files():
                     for url, data in urls_metadata.items():
                         url_titles[url] = data.get("title", "Unknown")
                     metadata["url_titles"] = url_titles
-
+                    metadata["url_section"] = url_section
+                
+                # For resource lists, store the list of references in metadata
+                if has_resource_patterns and len(potential_titles) > 3:
+                    metadata["referenced_resources"] = potential_titles
+                
                 # For short documents, keep the full content regardless of file type
                 # This applies to all file types where we've extracted text
                 keep_full_content = (
@@ -521,28 +548,63 @@ def organize_files():
                     len(urls) > 0                 # Any content with URLs
                 )
                 
+                log_f.write(f"- Keeping full content: {keep_full_content}\n")
+                
+                # Create the frontmatter post
                 post = frontmatter.Post(
                     content=text_content if keep_full_content else "[Content omitted]",
                     **metadata
                 )
 
+                # Save the metadata file
                 meta_path = os.path.join(meta_out, md_filename)
-                with open(meta_path, "w", encoding="utf-8") as f:
-                    f.write(frontmatter.dumps(post))
+                log_f.write(f"- Writing metadata to: {meta_path}\n")
+                
+                try:
+                    with open(meta_path, "w", encoding="utf-8") as f:
+                        f.write(frontmatter.dumps(post))
+                    log_f.write(f"- ✅ Metadata file written successfully\n")
+                except Exception as write_error:
+                    log_f.write(f"- ❌ Failed to write metadata file: {str(write_error)}\n")
+                    failed_files.append((filename, f"Failed to write metadata: {str(write_error)}"))
+                    continue
 
+                # Move the original file to appropriate source directory
                 dest_dir = os.path.join(source_out, file_type)
                 os.makedirs(dest_dir, exist_ok=True)
-                shutil.move(input_path, os.path.join(dest_dir, filename))
+                dest_path = os.path.join(dest_dir, filename)
+                
+                log_f.write(f"- Moving original file to: {dest_path}\n")
+                try:
+                    shutil.move(input_path, dest_path)
+                    log_f.write(f"- ✅ Original file moved successfully\n")
+                except Exception as move_error:
+                    log_f.write(f"- ❌ Failed to move original file: {str(move_error)}\n")
+                    # If we can't move the file but we've created the metadata, 
+                    # count it as a partial success
+                    if os.path.exists(meta_path):
+                        log_f.write(f"- ⚠️ Metadata created but original file not moved\n")
+                    else:
+                        failed_files.append((filename, f"Failed to move file: {str(move_error)}"))
+                        continue
 
-                log_f.write(f"✅ Metadata saved: {md_filename}\n")
-                log_f.write(f"✅ File moved to: {file_type}/{filename}\n")
+                log_f.write(f"✅ File {filename} processed successfully\n")
+                success_count += 1
 
             except Exception as e:
                 log_f.write(f"❌ Error processing {filename}: {str(e)}\n")
                 print(f"❌ ERROR in organize_files(): {e}")
+                failed_files.append((filename, str(e)))
                 continue
 
-    print("🏁 organize_files() complete.")
+    print(f"🏁 organize_files() complete. Processed {success_count} files successfully. Failed: {len(failed_files)}")
+    
+    # Return a summary of what happened
+    return {
+        "success_count": success_count,
+        "failed_files": failed_files,
+        "log_file": log_file_path
+    }
 
 if __name__ == "__main__":
     organize_files()
