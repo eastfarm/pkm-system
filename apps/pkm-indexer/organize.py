@@ -271,7 +271,12 @@ def organize_files():
                 
                 if urls:
                     enriched, urls_metadata = enrich_urls(urls, potential_titles)
-                    text_content += "\n\n---\n\n## Referenced Links\n" + enriched
+                    # Add the enriched URLs to a separate section
+                    url_section = "\n\n---\n\n## Referenced Links\n" + enriched
+                    
+                    # Don't modify the original text content, keep it untouched
+                    # Instead store the enriched URL data for display purposes
+                    metadata["url_section"] = url_section
 
                 base_name = Path(filename).stem
                 today = time.strftime("%Y-%m-%d")
@@ -305,12 +310,24 @@ def organize_files():
                     "extraction_method": extraction_method
                 }
                 
-                # Include URL information if relevant
-                if urls_metadata:
-                    metadata["referenced_urls"] = [url for url in urls]
+                # Store URL information if relevant
+                if urls:
+                    metadata["referenced_urls"] = urls
+                    # Store url titles in a more accessible format
+                    url_titles = {}
+                    for url, data in urls_metadata.items():
+                        url_titles[url] = data.get("title", "Unknown")
+                    metadata["url_titles"] = url_titles
 
+                # For short documents, keep the full content regardless of file type
+                # This applies to all file types where we've extracted text
+                keep_full_content = (
+                    len(text_content) < 10000 or  # Any text under 10K chars
+                    len(urls) > 0                 # Any content with URLs
+                )
+                
                 post = frontmatter.Post(
-                    content=text_content if file_type == "text" and len(text_content) < 3000 else "[Content omitted]",
+                    content=text_content if keep_full_content else "[Content omitted]",
                     **metadata
                 )
 
