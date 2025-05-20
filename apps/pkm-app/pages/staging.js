@@ -48,15 +48,17 @@ export default function Staging() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <h1 style={{ color: '#333' }}>Review Staging Files</h1>
         <div>
-          <Link href="/" style={{ 
-            marginRight: '15px',
-            padding: '8px 15px', 
-            backgroundColor: '#f0f0f0', 
-            color: '#333',
-            textDecoration: 'none',
-            borderRadius: '4px'
-          }}>
-            ← Back to Home
+          <Link href="/">
+            <a style={{ 
+              marginRight: '15px',
+              padding: '8px 15px', 
+              backgroundColor: '#f0f0f0', 
+              color: '#333',
+              textDecoration: 'none',
+              borderRadius: '4px'
+            }}>
+              ← Back to Home
+            </a>
           </Link>
           <button 
             onClick={() => setRefreshKey(prev => prev + 1)}

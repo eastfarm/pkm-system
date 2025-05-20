@@ -1,4 +1,4 @@
-# File: apps/pkm-app/pages/index.js
+// File: apps/pkm-app/pages/index.js
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import Link from 'next/link';
@@ -230,16 +230,18 @@ export default function Home() {
           <h2>Navigation</h2>
           <ul style={{ listStyleType: 'none', padding: '0' }}>
             <li style={{ margin: '10px 0' }}>
-              <Link href="/staging" style={{ 
-                display: 'block',
-                padding: '12px', 
-                backgroundColor: '#f0f0f0', 
-                borderRadius: '4px',
-                color: '#333',
-                textDecoration: 'none',
-                fontWeight: 'bold'
-              }}>
-                🔍 Review Staging Files
+              <Link href="/staging">
+                <a style={{ 
+                  display: 'block',
+                  padding: '12px', 
+                  backgroundColor: '#f0f0f0', 
+                  borderRadius: '4px',
+                  color: '#333',
+                  textDecoration: 'none',
+                  fontWeight: 'bold'
+                }}>
+                  🔍 Review Staging Files
+                </a>
               </Link>
             </li>
             <li style={{ margin: '10px 0' }}>
