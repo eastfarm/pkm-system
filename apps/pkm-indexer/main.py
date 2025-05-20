@@ -702,7 +702,11 @@ def get_staging():
                         if "tags" in metadata and metadata["tags"].startswith("[") and metadata["tags"].endswith("]"):
                             tag_str = metadata["tags"][1:-1]
                             metadata["tags"] = [tag.strip().strip("'\"") for tag in tag_str.split(",") if tag.strip()]
+                        elif "tags" in metadata and metadata["tags"].startswith("\n-"):
+                            tag_lines = metadata["tags"].strip().split("\n-")
+                            metadata["tags"] = [tag.strip() for tag in tag_lines if tag.strip()]
                             
+                        # Add staging file
                         staging_files.append({
                             "name": filename,
                             "metadata": metadata,
@@ -715,7 +719,7 @@ def get_staging():
 
 @app.post("/approve")
 async def approve_file(payload: dict):
-    """Approve a file from staging"""
+    """Approve a file or request reprocessing"""
     file_data = payload.get("file")
     if not file_data:
         return JSONResponse(status_code=400, content={"error": "Missing file data"})
@@ -727,20 +731,210 @@ async def approve_file(payload: dict):
     if not file_name:
         return JSONResponse(status_code=400, content={"error": "Missing file name"})
 
-    # Handle reprocess request
-    if metadata.get("reprocess_status") == "requested":
+    # Get full file path
+    file_path = f"pkm/Processed/Metadata/{file_name}"
+    
+    # Create logs directory if it doesn't exist
+    logs_path = "pkm/Logs"
+    os.makedirs(logs_path, exist_ok=True)
+    timestamp = int(time.time())
+    
+    # Create a log for this operation
+    log_file = f"{logs_path}/approval_{timestamp}.md"
+    with open(log_file, "w", encoding="utf-8") as log_f:
+        log_f.write(f"# File Approval at {datetime.now().isoformat()}\n\n")
+        log_f.write(f"File: {file_name}\n")
+        log_f.write(f"Action: {metadata.get('reprocess_status', 'save')}\n\n")
+
+        # Handle reprocess request
+        if metadata.get("reprocess_status") == "requested":
+            try:
+                log_f.write(f"## Reprocessing requested\n")
+                
+                # Update the file with reprocessing status
+                metadata["reprocess_status"] = "in_progress"
+                
+                # Format tags for YAML
+                if "tags" in metadata and isinstance(metadata["tags"], list):
+                    tags_yaml = "\n- " + "\n- ".join(metadata["tags"])
+                    metadata["tags"] = tags_yaml
+                
+                # Rebuild the file with updated metadata
+                metadata_lines = []
+                for key, value in metadata.items():
+                    metadata_lines.append(f"{key}: {value}")
+                    
+                file_content = "---\n" + "\n".join(metadata_lines) + "\n---\n\n" + content
+                
+                # Save the updated file
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(file_content)
+                
+                log_f.write(f"Updated metadata with reprocess_status = in_progress\n")
+                
+                # Get the source file info for reprocessing
+                source_file = metadata.get("source")
+                file_type = metadata.get("file_type", "unknown")
+                
+                if source_file and file_type:
+                    source_path = f"pkm/Processed/Sources/{file_type}/{source_file}"
+                    
+                    log_f.write(f"Source file: {source_path}\n")
+                    
+                    if os.path.exists(source_path):
+                        # Create a temporary copy in the inbox to reprocess
+                        inbox_path = "pkm/Inbox"
+                        os.makedirs(inbox_path, exist_ok=True)
+                        temp_path = os.path.join(inbox_path, source_file)
+                        
+                        # Copy the source file to inbox
+                        import shutil
+                        shutil.copy(source_path, temp_path)
+                        log_f.write(f"Copied source file to inbox: {temp_path}\n")
+                        
+                        # Save reprocessing notes to a separate file for AI to use
+                        if metadata.get("reprocess_notes"):
+                            notes_file = os.path.join(inbox_path, f"{os.path.splitext(source_file)[0]}_reprocess_notes.txt")
+                            with open(notes_file, "w", encoding="utf-8") as f:
+                                f.write(metadata.get("reprocess_notes", ""))
+                            log_f.write(f"Created reprocessing notes file: {notes_file}\n")
+                        
+                        # Now trigger organize_files to process it
+                        log_f.write(f"Triggering organize_files()\n")
+                        
+                        try:
+                            # Run organize_files directly
+                            result = organize_files()
+                            
+                            log_f.write(f"organize_files() result:\n")
+                            log_f.write(f"- Success count: {result['success_count']}\n")
+                            log_f.write(f"- Failed files: {result['failed_files']}\n")
+                            
+                            # Update the metadata file with reprocess complete status
+                            # First reload the file to get any changes from organize_files
+                            try:
+                                # Look for newly generated metadata file
+                                new_md_filename = None
+                                metadata_path = "pkm/Processed/Metadata"
+                                today = datetime.now().strftime("%Y-%m-%d")
+                                
+                                # First try with today's date
+                                potential_name = f"{today}_{os.path.splitext(source_file)[0]}.md"
+                                if os.path.exists(os.path.join(metadata_path, potential_name)):
+                                    new_md_filename = potential_name
+                                else:
+                                    # Try finding by base name
+                                    base_name = os.path.splitext(source_file)[0]
+                                    for f in os.listdir(metadata_path):
+                                        if base_name in f and f.endswith(".md") and f != file_name:
+                                            new_md_filename = f
+                                            break
+                                
+                                if new_md_filename:
+                                    log_f.write(f"Found new metadata file: {new_md_filename}\n")
+                                    
+                                    # Now we need to:
+                                    # 1. Delete the original metadata file
+                                    # 2. Return information about the new file
+                                    try:
+                                        # Remove the old metadata file
+                                        if os.path.exists(file_path):
+                                            os.remove(file_path)
+                                            log_f.write(f"Deleted original metadata file: {file_path}\n")
+                                    except Exception as remove_error:
+                                        log_f.write(f"Error removing original file: {str(remove_error)}\n")
+                                    
+                                    return {
+                                        "status": "reprocessed",
+                                        "filename": file_name,
+                                        "new_filename": new_md_filename,
+                                        "message": "File reprocessed successfully"
+                                    }
+                                else:
+                                    log_f.write(f"No new metadata file found after reprocessing\n")
+                                    
+                                    # Update the original file to mark reprocessing as complete but failed
+                                    with open(file_path, "r", encoding="utf-8") as f:
+                                        content = f.read()
+                                    
+                                    # Update the reprocess status
+                                    if "reprocess_status: in_progress" in content:
+                                        content = content.replace("reprocess_status: in_progress", "reprocess_status: failed")
+                                    
+                                    with open(file_path, "w", encoding="utf-8") as f:
+                                        f.write(content)
+                                    
+                                    log_f.write(f"Updated original file with reprocess_status = failed\n")
+                                    
+                                    return {
+                                        "status": "reprocess_failed",
+                                        "filename": file_name,
+                                        "message": "Reprocessing failed - no new metadata found"
+                                    }
+                                
+                            except Exception as post_process_error:
+                                log_f.write(f"Error after organize_files: {str(post_process_error)}\n")
+                                return JSONResponse(
+                                    status_code=500, 
+                                    content={
+                                        "status": "reprocess_error",
+                                        "error": f"Error after reprocessing: {str(post_process_error)}"
+                                    }
+                                )
+                            
+                        except Exception as organize_error:
+                            log_f.write(f"Error running organize_files: {str(organize_error)}\n")
+                            
+                            # Update the status to indicate failure
+                            with open(file_path, "r", encoding="utf-8") as f:
+                                content = f.read()
+                            
+                            # Update the reprocess status
+                            if "reprocess_status: in_progress" in content:
+                                content = content.replace("reprocess_status: in_progress", "reprocess_status: failed")
+                            
+                            with open(file_path, "w", encoding="utf-8") as f:
+                                f.write(content)
+                            
+                            return JSONResponse(
+                                status_code=500, 
+                                content={
+                                    "status": "reprocess_error",
+                                    "error": f"Failed to reprocess: {str(organize_error)}"
+                                }
+                            )
+                            
+                    else:
+                        log_f.write(f"Source file not found: {source_path}\n")
+                        return JSONResponse(
+                            status_code=404, 
+                            content={"error": f"Source file not found: {source_path}"}
+                        )
+                else:
+                    log_f.write(f"Missing source info: file={source_file}, type={file_type}\n")
+                    return JSONResponse(
+                        status_code=400, 
+                        content={"error": "Missing source file information"}
+                    )
+                    
+            except Exception as e:
+                log_f.write(f"Reprocessing error: {str(e)}\n")
+                return JSONResponse(
+                    status_code=500, 
+                    content={"error": f"Failed to queue reprocessing: {str(e)}"}
+                )
+        
+        # Standard approval flow (Save)
         try:
-            print(f"Reprocessing requested for {file_name}")
-            # Save the current metadata with reprocess status
-            metadata["reprocess_status"] = "in_progress"
-            
-            # Get the file path
-            file_path = f"pkm/Processed/Metadata/{file_name}"
+            log_f.write(f"## Saving file\n")
             
             # Format tags for YAML
             if "tags" in metadata and isinstance(metadata["tags"], list):
                 tags_yaml = "\n- " + "\n- ".join(metadata["tags"])
                 metadata["tags"] = tags_yaml
+            
+            # Make sure reviewed is set to true
+            metadata["reviewed"] = "true"
             
             # Rebuild the file with updated metadata
             metadata_lines = []
@@ -753,41 +947,12 @@ async def approve_file(payload: dict):
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(file_content)
                 
-            # Start a background task for reprocessing
-            # This could be enhanced to actually reprocess using AI
-            # For now, we just mark it as completed
-            metadata["reprocess_status"] = "complete"
-            
-            return {"status": "reprocessing", "filename": file_name}
-            
+            log_f.write(f"File saved successfully\n")
+                
+            return {"status": "approved", "filename": file_name}
         except Exception as e:
-            return JSONResponse(status_code=500, content={"error": f"Failed to queue reprocessing: {str(e)}"})
-        
-    # Standard approval flow
-    try:
-        # Format tags for YAML
-        if "tags" in metadata and isinstance(metadata["tags"], list):
-            tags_yaml = "\n- " + "\n- ".join(metadata["tags"])
-            metadata["tags"] = tags_yaml
-        
-        # Make sure reviewed is set to true
-        metadata["reviewed"] = "true"
-        
-        # Rebuild the file with updated metadata
-        metadata_lines = []
-        for key, value in metadata.items():
-            metadata_lines.append(f"{key}: {value}")
-            
-        file_content = "---\n" + "\n".join(metadata_lines) + "\n---\n\n" + content
-        
-        # Save the updated file
-        file_path = f"pkm/Processed/Metadata/{file_name}"
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(file_content)
-            
-        return {"status": "approved", "filename": file_name}
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": f"Failed to approve: {str(e)}"})
+            log_f.write(f"Save error: {str(e)}\n")
+            return JSONResponse(status_code=500, content={"error": f"Failed to approve: {str(e)}"})
 
 # ─── PROCESS FILES ENDPOINT ─────────────────────────────────────────
 

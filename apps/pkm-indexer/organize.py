@@ -289,6 +289,14 @@ def enrich_urls(urls, potential_titles=None):
 
 def get_extract(content, file_type=None, urls_metadata=None, log_f=None, is_linkedin=False):
     try:
+        # Check if OpenAI API key is configured
+        if not openai.api_key:
+            error_msg = "OpenAI API key not configured. Please set OPENAI_API_KEY environment variable."
+            print(f"🚫 Error: {error_msg}")
+            if log_f:
+                log_f.write(f"OpenAI ERROR: {error_msg}\n")
+            return "Missing API Key", "Extract failed: OpenAI API key not configured. Please add OPENAI_API_KEY to environment variables.", ["extraction_failed"]
+        
         print("🧠 Content sent to GPT (preview):\n", content[:500])
         
         # Determine appropriate extract length based on content
@@ -368,23 +376,151 @@ def get_extract(content, file_type=None, urls_metadata=None, log_f=None, is_link
                 "{\n  \"extract_title\": \"...\",\n  \"extract_content\": \"...\",\n  \"tags\": [\"tag1\", \"tag2\"]\n}\n\n"
                 f"Content:\n{content[:5000]}"
             )
-            
-        response = openai.ChatCompletion.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": "You analyze content and extract semantic meaning."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=extract_length  # Dynamic based on content
-        )
-        raw = response["choices"][0]["message"]["content"]
-        parsed = json.loads(raw)
-        return parsed.get("extract_title", "Untitled"), parsed.get("extract_content", "No summary."), parsed.get("tags", ["untagged"])
+        
+        # Log the prompt for debugging
+        if log_f:
+            log_f.write(f"OpenAI Prompt: {prompt[:500]}...\n")
+        
+        # Add retries for API call reliability
+        max_retries = 3
+        retry_delay = 2  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                response = openai.ChatCompletion.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": "You analyze content and extract semantic meaning."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=extract_length,  # Dynamic based on content
+                    temperature=0.7  # Balanced between creativity and accuracy
+                )
+                
+                # Process the raw response
+                raw = response["choices"][0]["message"]["content"]
+                
+                # Log the raw response for debugging
+                if log_f:
+                    log_f.write(f"OpenAI Raw Response: {raw[:500]}...\n")
+                
+                # Try to parse as JSON
+                try:
+                    parsed = json.loads(raw)
+                    
+                    # Validate the expected fields
+                    if "extract_title" not in parsed or "extract_content" not in parsed:
+                        if log_f:
+                            log_f.write(f"JSON parsing successful but missing required fields. Got: {list(parsed.keys())}\n")
+                        # Try a fallback approach - extract from raw text if possible
+                        title_match = re.search(r'"extract_title":\s*"([^"]+)"', raw)
+                        content_match = re.search(r'"extract_content":\s*"([^"]+)"', raw)
+                        tags_match = re.search(r'"tags":\s*\[(.*?)\]', raw)
+                        
+                        title = title_match.group(1) if title_match else "Extracted Title"
+                        extract = content_match.group(1) if content_match else raw
+                        
+                        if tags_match:
+                            tags_str = tags_match.group(1)
+                            tags = [tag.strip('"\'') for tag in tags_str.split(',')]
+                        else:
+                            tags = ["extracted"]
+                            
+                        return title, extract, tags
+                    
+                    # Get the extracted information
+                    title = parsed.get("extract_title", "Untitled")
+                    extract = parsed.get("extract_content", "No summary generated.")
+                    tags = parsed.get("tags", ["untagged"])
+                    
+                    # Basic validation
+                    if not title or title == "Untitled":
+                        # Try to generate a title from the first line of content
+                        first_line = content.split('\n')[0].strip()
+                        if len(first_line) > 5 and len(first_line) < 100:
+                            title = first_line
+                    
+                    # Make sure extract isn't empty
+                    if not extract or extract == "No summary." or extract == "No summary generated.":
+                        if content_length < 1000:
+                            # For short content, just use the original
+                            extract = content
+                        else:
+                            # For longer content, use the first 500 chars
+                            extract = content[:500] + "... (Extract generation failed, showing original content preview)"
+                    
+                    # Make sure we have some tags
+                    if not tags or tags == ["untagged"]:
+                        # Generate some basic tags from content
+                        if "AI" in content:
+                            tags.append("AI")
+                        if "book" in content.lower() or "publication" in content.lower():
+                            tags.append("Reading")
+                        if "research" in content.lower():
+                            tags.append("Research")
+                        if file_type:
+                            tags.append(file_type.capitalize())
+                    
+                    return title, extract, tags
+                    
+                except json.JSONDecodeError as json_err:
+                    if log_f:
+                        log_f.write(f"JSON parsing error: {str(json_err)}\nRaw text: {raw[:500]}...\n")
+                    
+                    # Attempt to extract meaningful content from non-JSON response
+                    lines = raw.split('\n')
+                    title = "Untitled"
+                    for line in lines:
+                        if "title" in line.lower() and ":" in line:
+                            title = line.split(":", 1)[1].strip().strip('"\'')
+                            break
+                    
+                    # Just use the raw output as the extract
+                    extract = raw
+                    
+                    # Generate basic tags
+                    tags = []
+                    for line in lines:
+                        if "tags" in line.lower() and ":" in line:
+                            tags_part = line.split(":", 1)[1].strip()
+                            tags = [t.strip().strip('",[]') for t in tags_part.split(",")]
+                            break
+                    
+                    if not tags:
+                        tags = ["extracted"]
+                        if file_type:
+                            tags.append(file_type.capitalize())
+                    
+                    return title, extract, tags
+                
+            except Exception as api_error:
+                if attempt < max_retries - 1:
+                    print(f"🔄 OpenAI API error, retrying ({attempt+1}/{max_retries}): {str(api_error)}")
+                    if log_f:
+                        log_f.write(f"OpenAI API error, retrying: {str(api_error)}\n")
+                    time.sleep(retry_delay * (2 ** attempt))  # Exponential backoff
+                else:
+                    # Last attempt failed, raise the error to be caught by outer try-except
+                    raise api_error
+        
+        # If we got here, all retries failed
+        raise Exception("All OpenAI API retries failed")
+        
     except Exception as e:
         if log_f:
             log_f.write(f"OpenAI ERROR: {e}\n")
         print(f"🚫 Error in get_extract: {e}")
-        return "Untitled", "Extract not available", ["uncategorized"]
+        
+        # Provide a more meaningful extract with the error
+        error_title = "Extraction Failed"
+        error_extract = f"The AI extraction process encountered an error: {str(e)}\n\nContent preview:\n{content[:300]}..."
+        
+        # Generate tags based on available information
+        fallback_tags = ["extraction_failed"]
+        if file_type:
+            fallback_tags.append(file_type.capitalize())
+        
+        return error_title, error_extract, fallback_tags
 
 def organize_files():
     inbox = "pkm/Inbox"
@@ -406,6 +542,7 @@ def organize_files():
     
     with open(log_file_path, "a", encoding="utf-8") as log_f:
         log_f.write(f"# Organize run at {time.time()}\n\n")
+        log_f.write(f"OpenAI API Key status: {bool(openai.api_key)}\n\n")
 
         files = [f for f in os.listdir(inbox) if os.path.isfile(os.path.join(inbox, f))]
         log_f.write(f"Found files in Inbox: {files}\n")
@@ -417,6 +554,16 @@ def organize_files():
                 file_type = infer_file_type(filename)
 
                 log_f.write(f"- File type detected: {file_type}\n")
+                
+                # Check for reprocessing notes
+                reprocess_notes_filename = f"{os.path.splitext(filename)[0]}_reprocess_notes.txt"
+                reprocess_notes_path = os.path.join(inbox, reprocess_notes_filename)
+                reprocess_notes = None
+                
+                if os.path.exists(reprocess_notes_path):
+                    with open(reprocess_notes_path, "r", encoding="utf-8") as f:
+                        reprocess_notes = f.read().strip()
+                    log_f.write(f"- Found reprocessing notes: {reprocess_notes[:100]}...\n")
                 
                 # Extract text based on file type
                 if file_type == "pdf":
@@ -488,14 +635,20 @@ def organize_files():
                 # Get extract from GPT
                 log_f.write(f"- Generating extract via OpenAI API\n")
                 try:
+                    # If there are reprocessing notes, include them in the log
+                    if reprocess_notes:
+                        log_f.write(f"- Using reprocessing notes: {reprocess_notes}\n")
+                    
+                    # Call OpenAI API with a higher timeout
                     title, extract, tags = get_extract(text_content, file_type, urls_metadata, log_f, is_linkedin)
                     log_f.write(f"- Extract generated successfully\n")
                     log_f.write(f"- Title: {title}\n")
                     log_f.write(f"- Tags: {tags}\n")
+                    log_f.write(f"- Extract length: {len(extract)} characters\n")
                 except Exception as extract_error:
                     log_f.write(f"- ❌ Extract generation failed: {str(extract_error)}\n")
                     title = "Extraction Failed: " + base_name
-                    extract = f"Failed to generate extract: {str(extract_error)}"
+                    extract = f"Failed to generate extract: {str(extract_error)}\n\nContent preview:\n{text_content[:500]}..."
                     tags = ["extraction_failed", "needs_review"]
 
                 # Default category based on file type
@@ -524,8 +677,14 @@ def organize_files():
                     "extract_content": extract,
                     "reviewed": False,
                     "parse_status": "success",
-                    "extraction_method": extraction_method
+                    "extraction_method": extraction_method,
+                    "reprocess_status": "none",
+                    "reprocess_rounds": "0"
                 }
+                
+                # Add reprocessing notes if they exist
+                if reprocess_notes:
+                    metadata["reprocess_notes"] = reprocess_notes
                 
                 # Store URL information if relevant
                 if urls:
@@ -578,6 +737,11 @@ def organize_files():
                 try:
                     shutil.move(input_path, dest_path)
                     log_f.write(f"- ✅ Original file moved successfully\n")
+                    
+                    # Also remove reprocessing notes file if it exists
+                    if os.path.exists(reprocess_notes_path):
+                        os.remove(reprocess_notes_path)
+                        log_f.write(f"- ✅ Removed reprocessing notes file\n")
                 except Exception as move_error:
                     log_f.write(f"- ❌ Failed to move original file: {str(move_error)}\n")
                     # If we can't move the file but we've created the metadata, 
