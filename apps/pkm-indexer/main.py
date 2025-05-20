@@ -17,6 +17,7 @@ from organize import organize_files
 from index import indexKB, searchKB
 import logging
 from datetime import datetime, timedelta
+import frontmatter
 
 app = FastAPI()
 
@@ -451,7 +452,7 @@ def sync_drive():
                 if not files:
                     log_f.write("ℹ️ No files to process in Google Drive Inbox\n")
                     return {
-                        "status": "✅ Synced - No files found in Google Drive Inbox folder",
+                        "status": "✅ Synced - Google Drive Inbox folder is empty",
                         "debug": debug_info
                     }
                 
@@ -559,7 +560,7 @@ def sync_drive():
                     log_f.write(f"  - {file}\n")
 
             return {
-                "status": f"✅ Synced and organized - {len(uploaded)} files processed",
+                "status": f"✅ Synced and organized - {len(uploaded)} files successfully processed",
                 "downloaded": [f[1] for f in downloaded],
                 "uploaded": uploaded,
                 "skipped": skipped,
@@ -678,40 +679,59 @@ def get_staging():
             
         file_path = os.path.join(metadata_path, filename)
         try:
+            # Use frontmatter to properly parse the YAML frontmatter
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
+            
+            # Check if this is a frontmatter file
+            if not content.startswith("---"):
+                continue
                 
-            # Parse frontmatter
-            if content.startswith("---"):
-                # Extract YAML frontmatter
-                parts = content.split("---", 2)
-                if len(parts) >= 3:
-                    frontmatter_yaml = parts[1]
-                    file_content = parts[2].strip()
-                    
-                    # Basic YAML parsing
-                    metadata = {}
-                    for line in frontmatter_yaml.strip().split("\n"):
-                        if ":" in line:
-                            key, value = line.split(":", 1)
-                            metadata[key.strip()] = value.strip()
-                            
-                    # Handle special fields
-                    if "reviewed" in metadata and metadata["reviewed"].lower() != "true":
-                        # Convert string tags to list
-                        if "tags" in metadata and metadata["tags"].startswith("[") and metadata["tags"].endswith("]"):
-                            tag_str = metadata["tags"][1:-1]
-                            metadata["tags"] = [tag.strip().strip("'\"") for tag in tag_str.split(",") if tag.strip()]
-                        elif "tags" in metadata and metadata["tags"].startswith("\n-"):
-                            tag_lines = metadata["tags"].strip().split("\n-")
-                            metadata["tags"] = [tag.strip() for tag in tag_lines if tag.strip()]
-                            
-                        # Add staging file
-                        staging_files.append({
-                            "name": filename,
-                            "metadata": metadata,
-                            "content": file_content
-                        })
+            # Use the frontmatter library for more reliable parsing
+            post = frontmatter.loads(content)
+            
+            # Extract metadata and content
+            metadata = dict(post.metadata)
+            file_content = post.content
+            
+            # Only include files that haven't been reviewed yet
+            if metadata.get("reviewed", "").lower() != "true":
+                # Process tags to ensure they're always a list
+                if "tags" in metadata:
+                    # Handle YAML formatted tags (with newlines and dashes)
+                    if isinstance(metadata["tags"], str):
+                        if metadata["tags"].startswith("\n-"):
+                            tags = [tag.strip() for tag in metadata["tags"].split("\n-") if tag.strip()]
+                            metadata["tags"] = tags
+                        # Handle array-like string format
+                        elif metadata["tags"].startswith("[") and metadata["tags"].endswith("]"):
+                            tags_str = metadata["tags"][1:-1].strip()
+                            metadata["tags"] = [tag.strip().strip("'\"") for tag in tags_str.split(",") if tag.strip()]
+                        # Handle comma-separated string format  
+                        elif "," in metadata["tags"]:
+                            metadata["tags"] = [tag.strip() for tag in metadata["tags"].split(",") if tag.strip()]
+                        # Handle single tag as string
+                        else:
+                            metadata["tags"] = [metadata["tags"]]
+                
+                # Ensure we have the extract content
+                if "extract_content" not in metadata and "extract" in metadata:
+                    metadata["extract_content"] = metadata["extract"]
+                
+                # Add to staging files list
+                staging_files.append({
+                    "name": filename,
+                    "metadata": metadata,
+                    "content": file_content
+                })
+                
+                # Log for debugging
+                print(f"Added staging file: {filename}")
+                if "tags" in metadata:
+                    print(f"  Tags: {metadata['tags']}")
+                if "extract_content" in metadata:
+                    print(f"  Extract length: {len(metadata['extract_content'])} chars")
+                
         except Exception as e:
             print(f"Error processing {filename}: {e}")
     

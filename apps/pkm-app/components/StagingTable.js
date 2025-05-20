@@ -66,11 +66,22 @@ export default function StagingTable({ files, onApprove }) {
   const getExtractContent = (file) => {
     if (!file || !file.metadata) return '';
     
-    // Try different possible locations for extract content
-    return file.metadata.extract_content || 
-           file.metadata.extract || 
-           (file.content && file.content.length > 50 ? file.content.substring(0, 1000) + '...' : file.content) || 
-           '';
+    // First try getting the exact extract_content field
+    if (file.metadata.extract_content && file.metadata.extract_content.length > 10) {
+      return file.metadata.extract_content;
+    }
+    
+    // Fall back to extract field
+    if (file.metadata.extract && file.metadata.extract.length > 10) {
+      return file.metadata.extract;
+    }
+    
+    // Fall back to first 1000 chars of file content
+    if (file.content && file.content.length > 50) {
+      return file.content.substring(0, 1000) + (file.content.length > 1000 ? '...' : '');
+    }
+    
+    return 'No extract available';
   };
 
   const tableStyle = {
@@ -253,9 +264,9 @@ export default function StagingTable({ files, onApprove }) {
                   fontSize: "12px", 
                   color: "#666" 
                 }}>
-                  Status: {file.metadata?.reprocess_status || "new"}
+                  Status: {file.metadata?.reprocess_status || "none"}
                   {file.metadata?.reprocess_rounds && 
-                    <div>Rounds: {file.metadata.reprocess_rounds}</div>
+                    <div>Rounds: '{file.metadata.reprocess_rounds}'</div>
                   }
                 </div>
               </td>
