@@ -1,4 +1,4 @@
-**Personal Knowledge Management (PKM) System — Overview (last updated: 2025-05-19 18:42 CET)**
+**Personal Knowledge Management (PKM) System — Overview (last updated: 2025-05-20 05:28 CET)**
 
 ---
 
@@ -6,88 +6,78 @@
 
 The PKM system is designed to help a non-coder manage personal knowledge across Windows PC and iOS (iPhone, Apple Watch) using a Progressive Web App (PWA). It enables capture, organization, review, and querying of diverse data types—notes, PDFs, URLs, videos, audio, and more—using AI for metadata generation and semantic search.
 
-The long-term vision includes automatic ingestion from `~/GoogleDrive/PKM/Inbox`, populated via:
+The system automatically ingests files from `~/GoogleDrive/PKM/Inbox`, which can be populated via:
 
 * iOS Drafts app
 * Manual file uploads
 * Email Shortcuts (Phase 2)
 
-All data will be transformed into structured markdown metadata records containing AI-enriched extracts (semantic summaries), tags, and references to the original source files. Text content is included only when appropriate. The system will be simple, extensible, and voice-enabled (in Phase 2).
+All data is transformed into structured markdown metadata records containing AI-enriched extracts (semantic summaries), tags, and references to the original source files. Text content is included only when appropriate. The system is simple, extensible, and will be voice-enabled (in Phase 2).
 
 ---
 
-### **Enhancement Ideas & Future Considerations**
+### **Current Status**
 
-#### **Approval Workflow: Save vs Reprocess**
+As of May 20, 2025, the system has:
 
-* Metadata schema will include:
+* ✅ Complete backend implementation with FastAPI
+* ✅ Complete frontend implementation with Next.js
+* ✅ Automatic Google Drive webhook integration that processes files as they're added
+* ✅ AI-powered metadata extraction for various file types
+* ✅ Comprehensive logging system for all processes
+* ✅ Semantic search functionality for retrieving knowledge (not tested yet)
+* ✅ Deployed on Railway.app as a fully functional cloud service
 
+Current challenges being addressed:
+* Ensuring OpenAI API key is properly configured for the AI extraction
+* Optimizing the webhook-based file monitoring
+* Making sure the application logs are accessible and informative
+
+---
+
+### **Recent Enhancements**
+
+#### **1. Google Drive Real-time Integration**
+
+* Implemented webhook-based monitoring of the PKM/Inbox folder
+* Files are processed immediately when added to Google Drive (no manual intervention needed)
+* The integration includes automatic renewal of webhooks and comprehensive error handling
+* Detailed logs are created for all operations, making troubleshooting easier
+
+#### **2. Enhanced Logging System**
+
+* All operations (file discovery, download, processing, upload) are now extensively logged
+* Log files are created for each sync operation with timestamp-based naming
+* Logs are accessible via the UI for easy troubleshooting
+* Error conditions are clearly indicated with detailed information
+
+#### **3. Improved Error Handling**
+
+* The system now handles errors gracefully at each step of the process
+* Error details are captured in the logs for easier diagnosis
+* The UI shows clear information about sync status and issues
+
+#### **4. Deployment Optimizations**
+
+* Railway.app deployment has been optimized for reliable operation
+* Background tasks ensure webhook registration stays active
+* Startup processes automatically set up necessary folders and integrations
+
+#### **5. Extract Title and Content Separation**
+
+* The extract is now split into `extract_title` and `extract_content`
+* `extract_title` can be inferred by the AI or taken from document content if clearly present
+* `extract_content` captures the semantic core of the file
+
+#### **6. Approval Workflow: Save vs Reprocess**
+
+* Metadata schema includes:
   * `reprocess_status`: `none`, `requested`, `in_progress`, `complete`
   * `reprocess_rounds`: count of times a file has been reprocessed
   * `reprocess_notes`: optional user instructions for improving analysis or clarifying intent
-  * `processing_profile`: preset applied by system or selected by user (e.g. `quote`, `memo`, `report`)
+  * `processing_profile`: preset applied by system or selected by user
 
-* Replace the current "Approve" model with two options: **Save** and **Reprocess**.
-
-* **Save** finalizes the current extract, tags, and metadata.
-
-* **Reprocess** allows the user to:
-
-  * Add clarifying instructions (e.g. “This is a quote from a lecture; just tag it”)
-  * Trigger a new LLM extract or retry with a different method
-  * Eventually choose from prompt profiles (e.g. `quote`, `memo`, `deep_analysis`)
-
-* A background agent (LLM-based or rules-based) will monitor failed or reprocessed records and:
-
-  * Normalize freeform reprocessing instructions
-  * Suggest or auto-assign standard `processing_profile` values
-  * Improve consistency and performance of future LLM prompts
-
-* This pattern supports:
-
-  * Recovery from failed extractions
-  * Higher-quality metadata over time
-  * User involvement in steering extract quality
-
-* Reprocessing will not be implemented in the MVP, but all systems (metadata format, staging UI, and LLM prompt structure) should anticipate its future role.
-
-#### **1. Extract Title and Content**
-
-* The extract is now split into `extract_title` and `extract_content`.
-* `extract_title` can be inferred by the AI or taken from document content if clearly present.
-* `extract_content` captures the semantic core of the file.
-
-#### **2. Thematic Taxonomy (Beyond Tags)**
-
-* Introduce a curated **theme classification layer** in addition to freeform tags.
-* Themes represent broader conceptual categories such as "Systems Thinking", "Ethics", "Personal Development", "Military Strategy".
-* Each metadata file may include a new `themes:` field (distinct from `tags:`).
-* A `themes.json` file will serve as the editable, centralized theme taxonomy.
-* The user will periodically review and update the theme list via a dashboard or text interface.
-* Over time, AI extracts will be prompted with awareness of current themes to improve classification precision.
-
-#### **3. Centralized Theme Awareness for LLM Prompts**
-
-* During `organize.py` summarization, the prompt will optionally include a reference to the current set of themes.
-
-#### **4. Differentiated Document Processing Pipeline**
-
-* The system supports different strategies for different file types:
-
-  * 🧠 Quotes are tagged and archived.
-  * 📑 Research articles are semantically summarized.
-  * 🎧 Audio is preprocessed.
-  * 🖼 Images use OCR (`pytesseract`) to extract readable text.
-  * 🌐 URLs are detected and enriched using `requests` and `BeautifulSoup`.
-
-#### **5. Additional Enhancements (Candidate List)**
-
-* Multi-lingual support
-* User-defined metadata fields
-* Version history
-* Bulk reprocessing
-* Integration with tools like Notion or Obsidian
-* Extract quality scoring
+* Replaced the "Approve" model with **Save** and **Reprocess** options.
 
 ---
 
@@ -95,41 +85,20 @@ All data will be transformed into structured markdown metadata records containin
 
 #### **Cloud-Based Google Drive Integration**
 
-* Files are pulled from `/PKM/Inbox` via the Google Drive API
-* Extracted metadata is saved locally, then uploaded to:
-
+* Files are monitored in `/PKM/Inbox` via the Google Drive API webhook system
+* Processed metadata is saved locally, then uploaded to:
   * `/PKM/Processed/Metadata/` (markdown files)
   * `/PKM/Processed/Sources/<filetype>/` (original files)
 * Original files in `/PKM/Inbox` are only deleted if both uploads succeed
 * `GOOGLE_TOKEN_JSON` is stored in Railway env vars for OAuth reuse
+* Webhook-based notification system ensures files are processed immediately
 
-#### **/sync-drive Endpoint**
+#### **Backend (pkm-indexer)**
 
-* Can be triggered manually via API or frontend button
-* Will later be run on a schedule (e.g. every 5–15 minutes)
-* Modular helper functions manage Drive folder creation, upload, and conditional deletion
-
-#### **Backend + Frontend Responsibilities**
-
-All backend responsibilities and frontend staging behavior (as described earlier) remain unchanged, with the addition of:
-
-* OCR for `.jpg`, `.png`, etc.
-* URL parsing and inline enrichment
-* Distinct `extract_title` + `extract_content`
-
-The system now fully supports a Google Drive–based, LLM-powered, multimodal PKM ingestion pipeline with extensible automation and review controls.
-
----
-
-### **Backend (pkm-indexer)**
-
-* **Stack**: Python (FastAPI), `apscheduler`, `frontmatter`, `shutil`, `openai`, `faiss`
-
+* **Stack**: Python (FastAPI), `frontmatter`, `openai`, `faiss`, Google Drive API
 * **Deployment**: Railway — `pkm-indexer-production.up.railway.app`
-
 * **Core Responsibilities**:
-
-  * Monitor/sync files from Google Drive Inbox
+  * Monitor/sync files from Google Drive Inbox via webhooks
   * Generate rich metadata extracts using OpenAI
   * Extract and summarize content from PDFs, audio, images, URLs, and markdown
   * Store structured `.md` metadata files with frontmatter and optional content
@@ -137,55 +106,85 @@ The system now fully supports a Google Drive–based, LLM-powered, multimodal PK
   * Index extracts and metadata fields into FAISS for retrieval
 
 * **Key Modules**:
-
-  * `main.py`: API endpoints `/staging`, `/approve`, `/trigger-organize`, `/sync-drive`, `/upload/{folder}`
+  * `main.py`: API endpoints, webhook handling, and Google Drive integration
   * `organize.py`: Processes files, generates AI extracts, injects metadata
   * `index.py`: Indexes extracts and metadata
 
-* **File Structure (Local Runtime)**:
-
+* **File Structure**:
   * `Inbox/` — where downloaded files land from Google Drive
   * `Processed/`
-
     * `Metadata/` — YAML frontmatter `.md` records (extracts, tags, source refs)
     * `Sources/` — original files, organized by type (PDFs, images, audio, etc.)
+  * `Logs/` — detailed logs of all operations
   * `Archive/` — optional long-term storage for previously handled files
 
-* **Scalability Note**: In Phase 2, content chunking and document splitting will support indexing long PDFs or audio transcripts across multiple `.md` metadata records.
-
----
-
-### **Frontend (pkm-app)**
+#### **Frontend (pkm-app)**
 
 * **Stack**: Next.js PWA, React, Axios
-
 * **Deployment**: Railway — `pkm-app-production.up.railway.app`
-
 * **Core Responsibilities**:
-
   * Review metadata extracts in staging
   * Edit and approve titles, tags, categories, extracts
-  * Provide access to the original file when applicable
+  * Provide access to logs and system status
   * Search indexed extracts via semantic search
 
 * **Key Components**:
-
-  * `index.js`: Query/search interface
+  * `index.js`: Query/search interface and system status
   * `staging.js`: File review queue
-  * `StagingTable.js`: Metadata editor (with emphasis on extract)
+  * `StagingTable.js`: Metadata editor with Save and Reprocess options
 
-* **Extract-Centric Design**:
+---
 
-  * The `extract_title` and `extract_content` fields are shown to the user in the staging interface
-  * The full `content` field is hidden from the UI unless needed for debugging or future use
-  * Future enhancements may include download buttons or side-by-side original content viewers
+### **Multi-Modal Processing Pipeline**
 
-* **Tag and Theme Management** (planned):
+The system supports different strategies for different file types:
 
-  * A registry of unique tags and themes will be generated based on all `.md` metadata
-  * Admins can browse, rename, merge, or delete tags and themes
-  * Optional **custom actions** can be configured for specific tags or themes (e.g. if tag is `life wisdom`, auto-append extract to `wisdom.md`)
-  * A dashboard endpoint (e.g. `/tags`) or a static tag index file (e.g. `tags.json`) can be regenerated after each indexing pass
+* **Notes & Text**: Captured and summarized with tags
+* **PDFs**: Analyzed for structure, key points extracted with AI
+* **Images**: OCR-processed to extract readable text
+* **URLs**: Detected and enriched using requests and BeautifulSoup
+* **Audio**: Preprocessed (transcription planned for Phase 2)
+
+---
+
+### **Required Environment Variables**
+
+* `OPENAI_API_KEY` - For AI-powered metadata extraction
+* `GOOGLE_TOKEN_JSON` - Google Drive OAuth credentials
+* `WEBHOOK_URL` - Set to the Railway deployment URL + "/drive-webhook"
+
+---
+
+### **Next Steps**
+
+1. **Optimize AI Extraction**: 
+   * Review and refine prompt templates for different document types
+   * Implement better fallback behaviors when AI extraction fails
+
+2. **Implement Thematic Taxonomy**:
+   * Create a curated theme classification system beyond simple tags
+   * Develop a theme management interface
+   * Update AI extraction to consider theme taxonomy
+
+3. **Enhanced Multimodal Support**:
+   * Improve image OCR quality and reliability
+   * Add audio transcription capabilities
+   * Implement better URL content extraction
+
+4. **Frontend Improvements**:
+   * Add a dedicated dashboard for system status monitoring
+   * Implement a tag/theme management interface
+   * Develop visualization for knowledge connections
+
+5. **Integration Expansions**:
+   * Add email integration for direct capture
+   * Support additional cloud storage providers
+   * Create integration points for Notion, Obsidian, and other knowledge tools
+
+6. **Deployment & Reliability**:
+   * Set up monitoring for system health
+   * Implement automatic backups
+   * Add error recovery mechanisms for more resilient processing
 
 ---
 
