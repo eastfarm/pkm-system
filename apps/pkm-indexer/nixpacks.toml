@@ -1,16 +1,22 @@
 # File: apps/pkm-indexer/nixpacks.toml
 [phases.setup]
+nixPkgs = ["python310", "gcc", "tesseract"]
 aptPkgs = [
-  "python3-dev",
-  "python3-pip",
   "build-essential",
-  "tesseract-ocr"
+  "libgomp1",
+  "cmake",
+  "swig",
+  "libatlas-base-dev",
+  "gfortran",
+  "libblas-dev",
+  "libeigen3-dev"
 ]
 
 [phases.build]
 cmds = [
-  "pip install --upgrade pip",
-  "pip install -r requirements.txt"
+  "pip install --upgrade pip setuptools wheel",
+  "pip install -r requirements.txt",
+  "pip install sentence-transformers==2.2.2 --no-cache-dir"  # Force install to make sure it's there
 ]
 
 [start]
