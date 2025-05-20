@@ -1016,9 +1016,21 @@ async def search(payload: dict):
         await indexKB()
         # Then search
         response = await searchKB(query)
+        
+        # Check if response indicates an error with sentence_transformers
+        if "sentence_transformers" in response:
+            # Provide a more user-friendly error message
+            return {
+                "response": (
+                    "Search is currently unavailable due to a technical issue with the embedding library. "
+                    "The system administrator has been notified. Please try again later or contact support."
+                )
+            }
+            
         return {"response": response}
     except Exception as e:
-        return {"response": f"Search error: {str(e)}"}
+        logger.error(f"Search error: {str(e)}")
+        return {"response": f"An unexpected error occurred during search. Please try again later or contact support."}
 
 # ─── UPLOAD ENDPOINT ───────────────────────────────────────────────
 
