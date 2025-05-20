@@ -452,7 +452,7 @@ def sync_drive():
                 if not files:
                     log_f.write("ℹ️ No files to process in Google Drive Inbox\n")
                     return {
-                        "status": "✅ Synced - Google Drive Inbox folder is empty",
+                        "status": "✅ Synced - No new files to process",
                         "debug": debug_info
                     }
                 
@@ -695,7 +695,17 @@ def get_staging():
             file_content = post.content
             
             # Only include files that haven't been reviewed yet
-            if metadata.get("reviewed", "").lower() != "true":
+            # Check for various forms of the "reviewed" field
+            is_reviewed = False
+            if "reviewed" in metadata:
+                # Handle different formats of the reviewed field
+                if isinstance(metadata["reviewed"], bool):
+                    is_reviewed = metadata["reviewed"]
+                elif isinstance(metadata["reviewed"], str):
+                    is_reviewed = metadata["reviewed"].lower() == "true"
+                    
+            # Include the file if it hasn't been reviewed
+            if not is_reviewed:
                 # Process tags to ensure they're always a list
                 if "tags" in metadata:
                     # Handle YAML formatted tags (with newlines and dashes)
@@ -718,6 +728,9 @@ def get_staging():
                 if "extract_content" not in metadata and "extract" in metadata:
                     metadata["extract_content"] = metadata["extract"]
                 
+                # Add debugging log
+                print(f"Adding file to staging: {filename}, reviewed = {is_reviewed}")
+                
                 # Add to staging files list
                 staging_files.append({
                     "name": filename,
@@ -735,6 +748,7 @@ def get_staging():
         except Exception as e:
             print(f"Error processing {filename}: {e}")
     
+    print(f"Returning {len(staging_files)} files for staging")
     return {"files": staging_files}
 
 @app.post("/approve")
