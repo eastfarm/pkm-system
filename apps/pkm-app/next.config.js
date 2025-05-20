@@ -2,14 +2,23 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  swcMinify: true,
-  // This ensures the build completes even with errors
+  swcMinify: false, // Disable swc minification to help with debugging
   eslint: {
     ignoreDuringBuilds: true,
   },
-  // Disables type checking during build to get past errors 
-  typescript: {
-    ignoreBuildErrors: true,
+  // Add log information during build
+  webpack: (config, { isServer, dev }) => {
+    // Force webpack to include detailed error information
+    config.optimization.minimize = false;
+    
+    if (!isServer && !dev) {
+      // More verbose webpack output for client builds
+      config.infrastructureLogging = {
+        level: 'verbose',
+      };
+    }
+    
+    return config;
   },
 };
 

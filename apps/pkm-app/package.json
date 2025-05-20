@@ -4,8 +4,10 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:verbose": "NODE_OPTIONS='--trace-warnings' next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "check": "node diagnostics.js"
   },
   "dependencies": {
     "next": "13.4.19",
