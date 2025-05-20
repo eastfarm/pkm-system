@@ -1,29 +1,16 @@
 # File: apps/pkm-indexer/nixpacks.toml
 [phases.setup]
-nixPkgs = ["python310", "gcc", "tesseract", "libmagic"]
 aptPkgs = [
+  "python3-dev",
+  "python3-pip",
   "build-essential",
-  "libgomp1",
-  "cmake",
-  "swig",
-  "libatlas-base-dev",
-  "gfortran",
-  "libblas-dev",
-  "libeigen3-dev",
-  "python3-magic",
-  "libmagic1",
-  "poppler-utils",
-  "tesseract-ocr",
-  "libreoffice"
+  "tesseract-ocr"
 ]
 
 [phases.build]
 cmds = [
-  "pip install --upgrade pip setuptools wheel",
-  "pip install -r requirements.txt",
-  "pip install sentence-transformers==2.2.2 --no-cache-dir",
-  "pip install \"unstructured[md]\" --no-cache-dir",
-  "pip install \"unstructured[pdf]\" --no-cache-dir"
+  "pip install --upgrade pip",
+  "pip install -r requirements.txt"
 ]
 
 [start]
