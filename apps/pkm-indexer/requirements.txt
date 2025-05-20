@@ -20,7 +20,15 @@ torch==1.13.1+cpu
 --extra-index-url https://download.pytorch.org/whl/cpu
 numpy==1.23.5
 python-multipart==0.0.9
-unstructured
+
+# Dependency for document processing
+unstructured==0.10.30
+unstructured-inference==0.7.19
+markdown
+python-magic
+lxml
+beautifulsoup4
+pdfminer.six
 
 # ✅ Required for Google Drive Integration
 google-auth
@@ -31,4 +39,3 @@ google-api-python-client
 pytesseract
 Pillow
 requests
-beautifulsoup4
